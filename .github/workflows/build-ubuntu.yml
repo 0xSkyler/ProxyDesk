@@ -47,12 +47,14 @@ jobs:
 
           node -e "const p=require('./recovered/package.json'); if(p.version!=='0.5.4') throw new Error('Expected v0.5.4'); if(p.main!=='dist/main/main.js') throw new Error('Unexpected main entry'); console.log('Recovered',p.productName,p.version,p.main)"
 
-          echo "Native binary scan:"
           if find recovered -type f -name '*.node' -print | grep -q .; then
             echo "::error::Packaged app contains native Node modules and needs platform-specific rebuild handling."
             find recovered -type f -name '*.node' -print
             exit 1
           fi
+
+          echo "=== Renderer target references ==="
+          grep -n -E 'localhost:5173|app\.isPackaged|loadFile|loadURL' recovered/dist/main/main.js | head -80 || true
 
       - name: Prepare Linux packaging metadata
         working-directory: recovered
@@ -68,7 +70,6 @@ jobs:
             'electron-builder': '24.13.3'
           });
           p.scripts = Object.assign({}, p.scripts, {
-            'start:linux': 'electron .',
             'package:linux': 'electron-builder --linux AppImage tar.gz --x64 --publish never'
           });
           p.build = {
@@ -88,24 +89,29 @@ jobs:
 
           npm install --no-audit --no-fund
 
-      - name: Native Electron smoke test
-        working-directory: recovered
-        shell: bash
-        run: |
-          set -o pipefail
-          rm -f /tmp/proxydesk-smoke.log
-          timeout 20s xvfb-run -a ./node_modules/.bin/electron . --disable-gpu --no-sandbox > /tmp/proxydesk-smoke.log 2>&1 || rc=$?
-          cat /tmp/proxydesk-smoke.log
-          if grep -q "ProxyDesk SEO Tracker Lite ready" /tmp/proxydesk-smoke.log; then
-            echo "Native Linux runtime smoke test passed."
-            exit 0
-          fi
-          echo "::error::ProxyDesk did not reach the ready state under native Linux Electron."
-          exit ${rc:-1}
-
       - name: Build Ubuntu artifacts
         working-directory: recovered
         run: npm run package:linux
+
+      - name: Smoke test packaged AppImage
+        shell: bash
+        run: |
+          set -o pipefail
+          APPIMAGE="$(find release-linux -maxdepth 1 -type f -name '*.AppImage' | head -1)"
+          test -n "$APPIMAGE"
+          chmod +x "$APPIMAGE"
+
+          rm -f /tmp/proxydesk-smoke.log
+          APPIMAGE_EXTRACT_AND_RUN=1 timeout 25s xvfb-run -a "$APPIMAGE" --disable-gpu --no-sandbox > /tmp/proxydesk-smoke.log 2>&1 || rc=$?
+          cat /tmp/proxydesk-smoke.log
+
+          if grep -q "ProxyDesk SEO Tracker Lite ready" /tmp/proxydesk-smoke.log; then
+            echo "Packaged native Linux AppImage smoke test passed."
+            exit 0
+          fi
+
+          echo "::error::Packaged AppImage did not reach the ready state."
+          exit ${rc:-1}
 
       - name: Show artifacts
         run: |
