@@ -1,0 +1,136 @@
+name: Build ProxyDesk v0.5.4 for Ubuntu
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    env:
+      ELECTRON_VERSION: "31.2.1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install extraction and runtime test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+          npm install -g @electron/asar
+
+      - name: Recover packaged v0.5.4 application
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p extracted unpacked recovered
+          7z x "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe" -oextracted
+
+          APP_ARCHIVE="$(find extracted -type f -name 'app-64.7z' | head -1)"
+          test -n "$APP_ARCHIVE"
+          7z x "$APP_ARCHIVE" -ounpacked
+
+          APP_ASAR="$(find unpacked -type f -name 'app.asar' | head -1)"
+          test -n "$APP_ASAR"
+          asar extract "$APP_ASAR" recovered
+
+          node -e "const p=require('./recovered/package.json'); if(p.version!=='0.5.4') throw new Error('Expected v0.5.4'); if(p.main!=='dist/main/main.js') throw new Error('Unexpected main entry'); console.log('Recovered',p.productName,p.version,p.main)"
+
+          if find recovered -type f -name '*.node' -print | grep -q .; then
+            echo "::error::Packaged app contains native Node modules and needs platform-specific rebuild handling."
+            find recovered -type f -name '*.node' -print
+            exit 1
+          fi
+
+      - name: Prepare Linux packaging metadata
+        working-directory: recovered
+        shell: bash
+        run: |
+          set -euxo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('package.json','utf8'));
+          p.productName = 'ProxyDesk';
+          p.devDependencies = Object.assign({}, p.devDependencies, {
+            electron: process.env.ELECTRON_VERSION,
+            'electron-builder': '24.13.3'
+          });
+          p.scripts = Object.assign({}, p.scripts, {
+            'package:linux': 'electron-builder --linux AppImage tar.gz --x64 --publish never'
+          });
+          p.build = {
+            appId: 'com.proxydesk.desktop',
+            productName: 'ProxyDesk',
+            asar: true,
+            directories: { output: '../release-linux' },
+            files: ['**/*'],
+            linux: {
+              target: ['AppImage', 'tar.gz'],
+              category: 'Utility',
+              artifactName: 'ProxyDesk-v${version}-linux-${arch}.${ext}'
+            }
+          };
+          fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n');
+          NODE
+
+          npm install --no-audit --no-fund
+
+      - name: Build Ubuntu artifacts
+        working-directory: recovered
+        run: npm run package:linux
+
+      - name: Smoke test packaged AppImage
+        shell: bash
+        run: |
+          set -o pipefail
+          APPIMAGE="$(find release-linux -maxdepth 1 -type f -name '*.AppImage' | head -1)"
+          test -n "$APPIMAGE"
+          chmod +x "$APPIMAGE"
+
+          rm -f /tmp/proxydesk-smoke.log
+          APPIMAGE_EXTRACT_AND_RUN=1 timeout 25s xvfb-run -a "$APPIMAGE" --disable-gpu --no-sandbox > /tmp/proxydesk-smoke.log 2>&1 || rc=$?
+          cat /tmp/proxydesk-smoke.log
+
+          if grep -q "ProxyDesk SEO Tracker Lite ready" /tmp/proxydesk-smoke.log; then
+            echo "Packaged native Linux AppImage smoke test passed."
+            exit 0
+          fi
+
+          echo "::error::Packaged AppImage did not reach the ready state."
+          exit ${rc:-1}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          path: |
+            release-linux/*.AppImage
+            release-linux/*.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish v0.5.4 release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TAG="v0.5.4"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               release-linux/*.AppImage               release-linux/*.tar.gz               "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe"               --clobber
+          else
+            gh release create "$TAG"               release-linux/*.AppImage               release-linux/*.tar.gz               "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe"               --title "ProxyDesk v0.5.4"               --notes "ProxyDesk v0.5.4 builds for Windows and Ubuntu x64. The Ubuntu AppImage is rebuilt natively from the packaged v0.5.4 Electron application and smoke-tested on Ubuntu 24.04 before release."
+          fi
