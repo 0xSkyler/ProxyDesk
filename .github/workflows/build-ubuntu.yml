@@ -3,11 +3,11 @@ name: Build ProxyDesk v0.5.4 for Ubuntu
 on:
   push:
     branches:
-      - ubuntu-build-v0.5.4
+      - main
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-linux:
@@ -52,9 +52,6 @@ jobs:
             find recovered -type f -name '*.node' -print
             exit 1
           fi
-
-          echo "=== Renderer target references ==="
-          grep -n -E 'localhost:5173|app\.isPackaged|loadFile|loadURL' recovered/dist/main/main.js | head -80 || true
 
       - name: Prepare Linux packaging metadata
         working-directory: recovered
@@ -113,12 +110,7 @@ jobs:
           echo "::error::Packaged AppImage did not reach the ready state."
           exit ${rc:-1}
 
-      - name: Show artifacts
-        run: |
-          ls -lah release-linux
-          file release-linux/*
-
-      - name: Upload Ubuntu build
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ProxyDesk-v0.5.4-Ubuntu-x64
@@ -127,3 +119,18 @@ jobs:
             release-linux/*.tar.gz
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish v0.5.4 release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TAG="v0.5.4"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG"               release-linux/*.AppImage               release-linux/*.tar.gz               "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe"               --clobber
+          else
+            gh release create "$TAG"               release-linux/*.AppImage               release-linux/*.tar.gz               "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe"               --title "ProxyDesk v0.5.4"               --notes "ProxyDesk v0.5.4 builds for Windows and Ubuntu x64. The Ubuntu AppImage is rebuilt natively from the packaged v0.5.4 Electron application and smoke-tested on Ubuntu 24.04 before release."
+          fi
