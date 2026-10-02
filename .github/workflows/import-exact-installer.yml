@@ -1,8 +1,8 @@
 name: Import exact ProxyDesk v0.5.4 installer
 
 on:
-  push:
-    branches: [main]
+  pull_request:
+    types: [opened, synchronize]
     paths:
       - .github/workflows/import-exact-installer.yml
   workflow_dispatch:
@@ -15,25 +15,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Download exact verified artifact
+      - name: Import exact verified installer
         shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
+          TARGET='ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe'
+          EXPECTED='01f888ad8fd8d5f9e299504ba579d31c58fb9fd43d6b6efa2cd87ea5c81cdbc1'
+
+          if [ -f "$TARGET" ]; then
+            test "$(sha256sum "$TARGET" | awk '{print $1}')" = "$EXPECTED"
+            echo "Exact installer already present."
+            exit 0
+          fi
+
           curl --fail --location --retry 3 \
-            'https://sdmntprcentralindia.oaiusercontent.com/files/00000000-4db4-8208-a85f-74d273c9634e/raw?se=2026-10-02T20%3A08%3A16Z&sp=r&sv=2026-02-06&sr=b&scid=10103087-ea29-503f-a8a2-867af5025b84&skoid=3cb6de21-012a-49c9-9402-a1ebf8d0bd06&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-02T19%3A57%3A48Z&ske=2026-10-03T19%3A57%3A48Z&sks=b&skv=2026-02-06&sig=xYTxItaRbmrK0PWA4DUsM3j9cjeYRkl4uiSisYGkZw0%3D' \
+            'https://sdmntprcentralindia.oaiusercontent.com/files/00000000-fbdc-8208-b0d4-8bc9ce6d45d1/raw?se=2026-10-02T20%3A10%3A18Z&sp=r&sv=2026-02-06&sr=b&scid=2d18c1ab-c58f-5b70-803d-041199e76ae3&skoid=3cb6de21-012a-49c9-9402-a1ebf8d0bd06&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-02T19%3A55%3A44Z&ske=2026-10-03T19%3A55%3A44Z&sks=b&skv=2026-02-06&sig=K0H6zdAmoy/GHSs/4Az8mCZqhl7s3Ctxyl8IFUYVQqg%3D' \
             -o /tmp/proxydesk-artifact.zip
           mkdir -p /tmp/proxydesk-extract
           unzip -j /tmp/proxydesk-artifact.zip MultiBrowserProxySetup.exe -d /tmp/proxydesk-extract
-          test "$(sha256sum /tmp/proxydesk-extract/MultiBrowserProxySetup.exe | awk '{print $1}')" = "01f888ad8fd8d5f9e299504ba579d31c58fb9fd43d6b6efa2cd87ea5c81cdbc1"
-          cp /tmp/proxydesk-extract/MultiBrowserProxySetup.exe 'ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe'
+          test "$(sha256sum /tmp/proxydesk-extract/MultiBrowserProxySetup.exe | awk '{print $1}')" = "$EXPECTED"
+          cp /tmp/proxydesk-extract/MultiBrowserProxySetup.exe "$TARGET"
 
-      - name: Commit installer
-        shell: bash
-        run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- 'ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe'
+          git add -- "$TARGET"
           git commit -m "Add exact ProxyDesk v0.5.4 installer"
-          git push
+          git push origin "HEAD:$HEAD_BRANCH"
