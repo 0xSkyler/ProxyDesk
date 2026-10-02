@@ -1,0 +1,19 @@
+name: Remove temporary import branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/remove-import-branch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete temporary branch
+        shell: bash
+        run: git push origin --delete import-exact-v0.5.4 || true
