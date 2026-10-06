@@ -49,6 +49,13 @@ was similar in short runs; no dramatic memory improvement is claimed.
 
 ## Limits and remaining checks
 
+The committed local measurement files use the initial schema-1 harness. Ubuntu
+CI exposed that its Promise-returning state predicates could complete before the
+IPC state condition was true. Schema 2 explicitly awaits and polls each state
+transition, including full proxy assignment before Stop/recreation. Use the
+release's paired schema-2 JSON and comparison for final validation; the initial
+local reports remain historical exploratory measurements.
+
 The fixture harness replaces external search discovery inside both test apps.
 Actual Google detection/click/challenge operation was not exercised against live
 search. Its eight exported helpers are unchanged and original browser interaction

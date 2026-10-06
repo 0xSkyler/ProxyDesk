@@ -14,9 +14,21 @@ const runtime = path.resolve(runtimeArg), source = path.resolve(sourceArg), outp
 const activeMs = Number(durationArg) * 1000, count = Number(countArg);
 assert.ok(activeMs >= 1000 && activeMs <= 24 * 3600 * 1000 && count >= 1 && count <= 100);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function waitForAutomation(page, predicate, expected) {
+    const deadline = performance.now() + 30_000;
+    let state;
+    do {
+        // Playwright's waitForFunction treats a returned Promise as truthy,
+        // even when it resolves false. Resolve the IPC result before testing it.
+        state = await page.evaluate(() => window.app.automation.getState());
+        if (predicate(state, expected)) return state;
+        await pause(50);
+    } while (performance.now() < deadline);
+    throw new Error(`Automation state did not settle: ${JSON.stringify(state)}`);
+}
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'proxydesk-benchmark-'));
 const servers = []; let application, exitObserved = false;
-const report = { schema: 1, platform: os.platform(), release: os.release(), arch: os.arch(), cpus: os.cpus().length, electron: require('../package.json').devDependencies.electron, testedBrowserCount: count, activeSeconds: activeMs / 1000, rendering: 'software/Xvfb', sandboxDisabled: true, scenario: 'local HTTP proxy fixtures; external search discovery substituted, original scroll/link/cycle code', samples: [], checks: {} };
+const report = { schema: 2, platform: os.platform(), release: os.release(), arch: os.arch(), cpus: os.cpus().length, electron: require('../package.json').devDependencies.electron, testedBrowserCount: count, activeSeconds: activeMs / 1000, rendering: 'software/Xvfb', sandboxDisabled: true, scenario: 'local HTTP proxy fixtures; external search discovery substituted, original scroll/link/cycle code', samples: [], checks: {} };
 async function server(handler) {
     const value = http.createServer(handler); servers.push(value);
     await new Promise((resolve, reject) => { value.once('error', reject); value.listen(0, '127.0.0.1', resolve); }); return value.address().port;
@@ -78,16 +90,16 @@ function processStart(pid) {
         await page.getByLabel('Target website', { exact: true }).fill('fixture.local');
         await page.getByLabel('Browsers', { exact: true }).fill(String(count));
         await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
-        await page.waitForFunction((number) => window.app.automation.getState().then((state) => state.running && !state.cycleInProgress && state.assignedBrowsers === number), count);
+        await waitForAutomation(page, (state, number) => state.running && state.cycleNumber >= 1 && !state.cycleInProgress && state.assignedBrowsers === number, count);
         report.checks.startAndAssignment = true;
         await snapshot('active-start', page);
         const activeStart = performance.now();
         while (performance.now() - activeStart < activeMs) { await pause(Math.min(5000, activeMs - (performance.now() - activeStart))); await snapshot('active', page); }
         await page.getByRole('button', { name: 'Rotate / Run Now', exact: true }).click();
-        await page.waitForFunction(() => window.app.automation.getState().then((state) => state.cycleNumber === 2 && !state.cycleInProgress));
+        await waitForAutomation(page, (state) => state.cycleNumber === 2 && !state.cycleInProgress);
         report.checks.rotation = true;
         await page.getByRole('button', { name: 'Stop SEO Tracker', exact: true }).click();
-        await page.waitForFunction(() => window.app.automation.getState().then((state) => !state.running));
+        await waitForAutomation(page, (state) => !state.running);
         assert.equal(await application.evaluate(() => global.__probe.browser.getAll().some((browser) => browser.keepAliveEnabled)), false);
         report.checks.stop = true; await snapshot('stopped', page);
         // Repeated resize of workspace pool exposes BrowserView lifetime leaks.
@@ -96,14 +108,14 @@ function processStart(pid) {
         for (let round = 0; round < 3; round++) {
             await page.getByLabel('Browsers', { exact: true }).fill('1');
             await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
-            await page.waitForFunction(() => window.app.automation.getState().then((state) => state.running && !state.cycleInProgress && state.browserIds.length === 1));
+            await waitForAutomation(page, (state) => state.running && state.cycleNumber >= 1 && !state.cycleInProgress && state.browserIds.length === 1 && state.assignedBrowsers === 1);
             await page.getByRole('button', { name: 'Stop SEO Tracker', exact: true }).click();
-            await page.waitForFunction(() => window.app.automation.getState().then((state) => !state.running));
+            await waitForAutomation(page, (state) => !state.running);
             await page.getByLabel('Browsers', { exact: true }).fill(String(count));
             await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
-            await page.waitForFunction((number) => window.app.automation.getState().then((state) => state.running && !state.cycleInProgress && state.browserIds.length === number), count);
+            await waitForAutomation(page, (state, number) => state.running && state.cycleNumber >= 1 && !state.cycleInProgress && state.browserIds.length === number && state.assignedBrowsers === number, count);
             await page.getByRole('button', { name: 'Stop SEO Tracker', exact: true }).click();
-            await page.waitForFunction(() => window.app.automation.getState().then((state) => !state.running));
+            await waitForAutomation(page, (state) => !state.running);
             const details = await application.evaluate(({ webContents }) => ({
                 managed: Array.from(global.__probe.browser.browsers.values()).map((browser) => ({ id: browser.id, contentId: browser.view.webContents.id })),
                 contents: webContents.getAllWebContents().filter((wc) => !wc.isDestroyed()).map((wc) => ({ id: wc.id, type: wc.getType(), url: wc.getURL() })),
