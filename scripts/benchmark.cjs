@@ -92,6 +92,7 @@ function processStart(pid) {
         report.checks.stop = true; await snapshot('stopped', page);
         // Repeated resize of workspace pool exposes BrowserView lifetime leaks.
         const counts = [];
+        report.workspaceRecreationDetails = [];
         for (let round = 0; round < 3; round++) {
             await page.getByLabel('Browsers', { exact: true }).fill('1');
             await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
@@ -103,7 +104,13 @@ function processStart(pid) {
             await page.waitForFunction((number) => window.app.automation.getState().then((state) => state.running && !state.cycleInProgress && state.browserIds.length === number), count);
             await page.getByRole('button', { name: 'Stop SEO Tracker', exact: true }).click();
             await page.waitForFunction(() => window.app.automation.getState().then((state) => !state.running));
-            counts.push(await application.evaluate(({ webContents }) => webContents.getAllWebContents().filter((wc) => !wc.isDestroyed()).length));
+            const details = await application.evaluate(({ webContents }) => ({
+                managed: global.__probe.browser.getAll().map((browser) => ({ id: browser.id, contentId: browser.view.webContents.id })),
+                contents: webContents.getAllWebContents().filter((wc) => !wc.isDestroyed()).map((wc) => ({ id: wc.id, type: wc.getType(), url: wc.getURL() })),
+                state: global.__probe.automation.getState()
+            }));
+            counts.push(details.contents.length);
+            report.workspaceRecreationDetails.push(details);
         }
         report.workspaceRecreationCounts = counts;
         report.checks.workspaceRecreation = counts.every((value) => value === count + 1);
@@ -132,6 +139,6 @@ function processStart(pid) {
         await fsp.mkdir(path.dirname(output), { recursive: true });
         await fsp.writeFile(output, JSON.stringify(report, null, 2) + '\n');
         await fsp.rm(temporary, { recursive: true, force: true });
-        console.log(JSON.stringify({ output, startupMs: report.startupMs, checks: report.checks, error: report.error }));
+        console.log(JSON.stringify({ output, startupMs: report.startupMs, checks: report.checks, workspaceRecreationCounts: report.workspaceRecreationCounts, recreationFailureDetails: report.checks.workspaceRecreation === false ? report.workspaceRecreationDetails : undefined, error: report.error }));
     }
 })();

@@ -128,6 +128,8 @@ jobs:
         with:
           name: ProxyDesk-Linux-baseline-comparison
           path: .measurements/*.json
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@v4
         if: always()
@@ -152,6 +154,10 @@ jobs:
         with:
           name: ProxyDesk-Linux-comparison-report
           path: release-linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: ProxyDesk-Linux-baseline-comparison
+          path: release-linux
       - name: Publish verified Linux release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -165,4 +171,4 @@ jobs:
           cd release-linux
           sha256sum *.AppImage *.tar.gz > SHA256SUMS
           cd ..
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md --target "$GITHUB_SHA" --title "ProxyDesk v0.5.4 - Linux reliability update 1" --notes "Native source build. Original v0.5.4 UI and task behavior retained. Lifecycle cancellation, shutdown cleanup, log bounds and dependency packaging improvements. Ubuntu CI tests, AppImage renderer smoke checks and paired original/optimized fixture benchmarks passed. Longer VPS soak and live search regression remain environment-specific checks."
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "ProxyDesk v0.5.4 - Linux reliability update 1" --notes "Native source build. Original v0.5.4 UI and task behavior retained. Lifecycle cancellation, shutdown cleanup, log bounds and dependency packaging improvements. Ubuntu CI tests, AppImage renderer smoke checks and paired original/optimized fixture benchmarks passed. Longer VPS soak and live search regression remain environment-specific checks."
