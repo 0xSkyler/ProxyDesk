@@ -1,0 +1,2755 @@
+{
+  "schema": 1,
+  "platform": "linux",
+  "release": "6.18.44",
+  "arch": "x64",
+  "cpus": 9,
+  "electron": "31.2.1",
+  "testedBrowserCount": 10,
+  "activeSeconds": 15,
+  "rendering": "software/Xvfb",
+  "sandboxDisabled": true,
+  "scenario": "local HTTP proxy fixtures; external search discovery substituted, original scroll/link/cycle code",
+  "samples": [
+    {
+      "uptimeMs": 5556.667435,
+      "mainMemory": {
+        "rss": 207564800,
+        "heapTotal": 9142272,
+        "heapUsed": 4787660,
+        "external": 2051082,
+        "arrayBuffers": 0
+      },
+      "mainCpuPercent": 1.832423934308983,
+      "mainFileDescriptors": 268,
+      "processPid": 470,
+      "procSelfPid": 7324,
+      "pidNamespaceConsistent": false,
+      "metrics": [
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 470,
+          "type": "Browser",
+          "creationTime": 1791311667070,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 495,
+          "type": "GPU",
+          "creationTime": 0,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 500,
+          "type": "Utility",
+          "creationTime": 0,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 636,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 550,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 551,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 557,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 565,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 566,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 567,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 570,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 576,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 600,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 621,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        }
+      ],
+      "contents": [
+        {
+          "id": 11,
+          "type": "browserView",
+          "pid": 621,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 10,
+          "type": "browserView",
+          "pid": 600,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 9,
+          "type": "browserView",
+          "pid": 576,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 8,
+          "type": "browserView",
+          "pid": 570,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 7,
+          "type": "browserView",
+          "pid": 567,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 6,
+          "type": "browserView",
+          "pid": 566,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 5,
+          "type": "browserView",
+          "pid": 565,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 4,
+          "type": "browserView",
+          "pid": 557,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 3,
+          "type": "browserView",
+          "pid": 551,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 2,
+          "type": "browserView",
+          "pid": 550,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 1,
+          "type": "window",
+          "pid": 636,
+          "listeners": 15,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        }
+      ],
+      "activeTimers": 1,
+      "timeoutCount": 0,
+      "intervalCount": 1,
+      "listeners": {
+        "app": 9,
+        "ipcMain": 1,
+        "browserManager": 1,
+        "automationManager": 2,
+        "contents": 275
+      },
+      "ipc": {
+        "received": {
+          "browser:getAll": 1,
+          "automation:getState": 1,
+          "browser:setBounds": 20
+        },
+        "sent": {
+          "browser:stateChanged": 20
+        }
+      },
+      "eventLoopDelayMs": {
+        "mean": 20.689285353612167,
+        "max": 69.009407,
+        "p99": 29.933567
+      },
+      "workspaceCount": 10,
+      "state": {
+        "running": false,
+        "cycleInProgress": false,
+        "proxySource": "All Working API",
+        "query": "",
+        "targetWebsite": "",
+        "intervalSec": 600,
+        "browserCount": 10,
+        "maxPages": 20,
+        "browserIds": [],
+        "cycleNumber": 0,
+        "fetchedProxies": 0,
+        "checkedProxies": 0,
+        "totalProxies": 0,
+        "liveProxies": 0,
+        "assignedBrowsers": 0
+      },
+      "stage": "idle",
+      "rendererFramesPerSecond": 61.459159397298066
+    },
+    {
+      "uptimeMs": 6917.664691,
+      "mainMemory": {
+        "rss": 215359488,
+        "heapTotal": 8617984,
+        "heapUsed": 6001684,
+        "external": 3476993,
+        "arrayBuffers": 0
+      },
+      "mainCpuPercent": 19.164163110449586,
+      "mainFileDescriptors": 269,
+      "processPid": 470,
+      "procSelfPid": 7324,
+      "pidNamespaceConsistent": false,
+      "metrics": [
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 470,
+          "type": "Browser",
+          "creationTime": 1791311667070,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 495,
+          "type": "GPU",
+          "creationTime": 0,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 500,
+          "type": "Utility",
+          "creationTime": 0,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 636,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 550,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 551,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 557,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 565,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 566,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 567,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 570,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 576,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 600,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 621,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        }
+      ],
+      "contents": [
+        {
+          "id": 11,
+          "type": "browserView",
+          "pid": 621,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 10,
+          "type": "browserView",
+          "pid": 600,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 9,
+          "type": "browserView",
+          "pid": 576,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 8,
+          "type": "browserView",
+          "pid": 570,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 7,
+          "type": "browserView",
+          "pid": 567,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 6,
+          "type": "browserView",
+          "pid": 566,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 5,
+          "type": "browserView",
+          "pid": 565,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 4,
+          "type": "browserView",
+          "pid": 557,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 3,
+          "type": "browserView",
+          "pid": 551,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 2,
+          "type": "browserView",
+          "pid": 550,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 1,
+          "type": "window",
+          "pid": 636,
+          "listeners": 15,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        }
+      ],
+      "activeTimers": 13,
+      "timeoutCount": 11,
+      "intervalCount": 2,
+      "listeners": {
+        "app": 9,
+        "ipcMain": 1,
+        "browserManager": 1,
+        "automationManager": 2,
+        "contents": 275
+      },
+      "ipc": {
+        "received": {
+          "browser:getAll": 1,
+          "automation:getState": 2,
+          "browser:setBounds": 20,
+          "automation:start": 1
+        },
+        "sent": {
+          "browser:stateChanged": 120,
+          "automation:stateChanged": 5,
+          "automation:seoResult": 10
+        }
+      },
+      "eventLoopDelayMs": {
+        "mean": 21.256159492063492,
+        "max": 55.377919,
+        "p99": 35.258367
+      },
+      "workspaceCount": 10,
+      "state": {
+        "running": true,
+        "cycleInProgress": false,
+        "proxySource": "All Working API",
+        "query": "first, second",
+        "targetWebsite": "fixture.local",
+        "controlledTestHost": "fixture.local",
+        "intervalSec": 600,
+        "browserCount": 10,
+        "maxPages": 20,
+        "browserIds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "cycleNumber": 1,
+        "fetchedProxies": 10,
+        "checkedProxies": 10,
+        "totalProxies": 10,
+        "liveProxies": 10,
+        "assignedBrowsers": 10,
+        "nextCycleAt": "2026-10-06T18:44:34.572Z",
+        "lastCycleStartedAt": "2026-10-06T18:34:34.572Z",
+        "lastCycleCompletedAt": "2026-10-06T18:34:34.659Z"
+      },
+      "stage": "active-start",
+      "rendererFramesPerSecond": 59.50019833398347
+    },
+    {
+      "uptimeMs": 12939.444163,
+      "mainMemory": {
+        "rss": 215621632,
+        "heapTotal": 8617984,
+        "heapUsed": 6521188,
+        "external": 3476993,
+        "arrayBuffers": 0
+      },
+      "mainCpuPercent": 4.040052496821711,
+      "mainFileDescriptors": 268,
+      "processPid": 470,
+      "procSelfPid": 7324,
+      "pidNamespaceConsistent": false,
+      "metrics": [
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 470,
+          "type": "Browser",
+          "creationTime": 1791311667070,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 495,
+          "type": "GPU",
+          "creationTime": 0,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 500,
+          "type": "Utility",
+          "creationTime": 0,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 636,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 550,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 551,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 557,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 565,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 566,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 567,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 570,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 576,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 600,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 621,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        }
+      ],
+      "contents": [
+        {
+          "id": 11,
+          "type": "browserView",
+          "pid": 621,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 10,
+          "type": "browserView",
+          "pid": 600,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 9,
+          "type": "browserView",
+          "pid": 576,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 8,
+          "type": "browserView",
+          "pid": 570,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 7,
+          "type": "browserView",
+          "pid": 567,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 6,
+          "type": "browserView",
+          "pid": 566,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 5,
+          "type": "browserView",
+          "pid": 565,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 4,
+          "type": "browserView",
+          "pid": 557,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 3,
+          "type": "browserView",
+          "pid": 551,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 2,
+          "type": "browserView",
+          "pid": 550,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 1,
+          "type": "window",
+          "pid": 636,
+          "listeners": 15,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        }
+      ],
+      "activeTimers": 12,
+      "timeoutCount": 10,
+      "intervalCount": 2,
+      "listeners": {
+        "app": 9,
+        "ipcMain": 1,
+        "browserManager": 1,
+        "automationManager": 2,
+        "contents": 275
+      },
+      "ipc": {
+        "received": {
+          "browser:getAll": 1,
+          "automation:getState": 2,
+          "browser:setBounds": 20,
+          "automation:start": 1
+        },
+        "sent": {
+          "browser:stateChanged": 120,
+          "automation:stateChanged": 5,
+          "automation:seoResult": 10
+        }
+      },
+      "eventLoopDelayMs": {
+        "mean": 20.213470383838384,
+        "max": 21.872639,
+        "p99": 20.873215
+      },
+      "workspaceCount": 10,
+      "state": {
+        "running": true,
+        "cycleInProgress": false,
+        "proxySource": "All Working API",
+        "query": "first, second",
+        "targetWebsite": "fixture.local",
+        "controlledTestHost": "fixture.local",
+        "intervalSec": 600,
+        "browserCount": 10,
+        "maxPages": 20,
+        "browserIds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "cycleNumber": 1,
+        "fetchedProxies": 10,
+        "checkedProxies": 10,
+        "totalProxies": 10,
+        "liveProxies": 10,
+        "assignedBrowsers": 10,
+        "nextCycleAt": "2026-10-06T18:44:34.572Z",
+        "lastCycleStartedAt": "2026-10-06T18:34:34.572Z",
+        "lastCycleCompletedAt": "2026-10-06T18:34:34.659Z"
+      },
+      "stage": "active",
+      "rendererFramesPerSecond": 61.734541471660336
+    },
+    {
+      "uptimeMs": 18959.459708000002,
+      "mainMemory": {
+        "rss": 215752704,
+        "heapTotal": 7831552,
+        "heapUsed": 6697488,
+        "external": 3475611,
+        "arrayBuffers": 0
+      },
+      "mainCpuPercent": 5.097130506283023,
+      "mainFileDescriptors": 268,
+      "processPid": 470,
+      "procSelfPid": 7324,
+      "pidNamespaceConsistent": false,
+      "metrics": [
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 470,
+          "type": "Browser",
+          "creationTime": 1791311667070,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 495,
+          "type": "GPU",
+          "creationTime": 0,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 500,
+          "type": "Utility",
+          "creationTime": 0,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 636,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 550,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 551,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 557,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 565,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 566,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 567,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 570,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 576,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 600,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 621,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        }
+      ],
+      "contents": [
+        {
+          "id": 11,
+          "type": "browserView",
+          "pid": 621,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 10,
+          "type": "browserView",
+          "pid": 600,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 9,
+          "type": "browserView",
+          "pid": 576,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 8,
+          "type": "browserView",
+          "pid": 570,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 7,
+          "type": "browserView",
+          "pid": 567,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 6,
+          "type": "browserView",
+          "pid": 566,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 5,
+          "type": "browserView",
+          "pid": 565,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 4,
+          "type": "browserView",
+          "pid": 557,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 3,
+          "type": "browserView",
+          "pid": 551,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 2,
+          "type": "browserView",
+          "pid": 550,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 1,
+          "type": "window",
+          "pid": 636,
+          "listeners": 15,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        }
+      ],
+      "activeTimers": 12,
+      "timeoutCount": 10,
+      "intervalCount": 2,
+      "listeners": {
+        "app": 9,
+        "ipcMain": 1,
+        "browserManager": 1,
+        "automationManager": 2,
+        "contents": 275
+      },
+      "ipc": {
+        "received": {
+          "browser:getAll": 1,
+          "automation:getState": 2,
+          "browser:setBounds": 20,
+          "automation:start": 1
+        },
+        "sent": {
+          "browser:stateChanged": 180,
+          "automation:stateChanged": 5,
+          "automation:seoResult": 10
+        }
+      },
+      "eventLoopDelayMs": {
+        "mean": 20.203706181818184,
+        "max": 22.511615,
+        "p99": 21.250047
+      },
+      "workspaceCount": 10,
+      "state": {
+        "running": true,
+        "cycleInProgress": false,
+        "proxySource": "All Working API",
+        "query": "first, second",
+        "targetWebsite": "fixture.local",
+        "controlledTestHost": "fixture.local",
+        "intervalSec": 600,
+        "browserCount": 10,
+        "maxPages": 20,
+        "browserIds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "cycleNumber": 1,
+        "fetchedProxies": 10,
+        "checkedProxies": 10,
+        "totalProxies": 10,
+        "liveProxies": 10,
+        "assignedBrowsers": 10,
+        "nextCycleAt": "2026-10-06T18:44:34.572Z",
+        "lastCycleStartedAt": "2026-10-06T18:34:34.572Z",
+        "lastCycleCompletedAt": "2026-10-06T18:34:34.659Z"
+      },
+      "stage": "active",
+      "rendererFramesPerSecond": 61.85155626495547
+    },
+    {
+      "uptimeMs": 22938.228217,
+      "mainMemory": {
+        "rss": 216137728,
+        "heapTotal": 7831552,
+        "heapUsed": 6225652,
+        "external": 3475611,
+        "arrayBuffers": 0
+      },
+      "mainCpuPercent": 4.479774694584009,
+      "mainFileDescriptors": 268,
+      "processPid": 470,
+      "procSelfPid": 7324,
+      "pidNamespaceConsistent": false,
+      "metrics": [
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 470,
+          "type": "Browser",
+          "creationTime": 1791311667070,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 495,
+          "type": "GPU",
+          "creationTime": 0,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 500,
+          "type": "Utility",
+          "creationTime": 0,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 636,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 550,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 551,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 557,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 565,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 566,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 567,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 570,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 576,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 600,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 621,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        }
+      ],
+      "contents": [
+        {
+          "id": 11,
+          "type": "browserView",
+          "pid": 621,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 10,
+          "type": "browserView",
+          "pid": 600,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 9,
+          "type": "browserView",
+          "pid": 576,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 8,
+          "type": "browserView",
+          "pid": 570,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 7,
+          "type": "browserView",
+          "pid": 567,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 6,
+          "type": "browserView",
+          "pid": 566,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 5,
+          "type": "browserView",
+          "pid": 565,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 4,
+          "type": "browserView",
+          "pid": 557,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 3,
+          "type": "browserView",
+          "pid": 551,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 2,
+          "type": "browserView",
+          "pid": 550,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 1,
+          "type": "window",
+          "pid": 636,
+          "listeners": 15,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        }
+      ],
+      "activeTimers": 12,
+      "timeoutCount": 10,
+      "intervalCount": 2,
+      "listeners": {
+        "app": 9,
+        "ipcMain": 1,
+        "browserManager": 1,
+        "automationManager": 2,
+        "contents": 275
+      },
+      "ipc": {
+        "received": {
+          "browser:getAll": 1,
+          "automation:getState": 2,
+          "browser:setBounds": 20,
+          "automation:start": 1
+        },
+        "sent": {
+          "browser:stateChanged": 180,
+          "automation:stateChanged": 5,
+          "automation:seoResult": 10
+        }
+      },
+      "eventLoopDelayMs": {
+        "mean": 20.180824816326528,
+        "max": 21.708799,
+        "p99": 21.168127
+      },
+      "workspaceCount": 10,
+      "state": {
+        "running": true,
+        "cycleInProgress": false,
+        "proxySource": "All Working API",
+        "query": "first, second",
+        "targetWebsite": "fixture.local",
+        "controlledTestHost": "fixture.local",
+        "intervalSec": 600,
+        "browserCount": 10,
+        "maxPages": 20,
+        "browserIds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "cycleNumber": 1,
+        "fetchedProxies": 10,
+        "checkedProxies": 10,
+        "totalProxies": 10,
+        "liveProxies": 10,
+        "assignedBrowsers": 10,
+        "nextCycleAt": "2026-10-06T18:44:34.572Z",
+        "lastCycleStartedAt": "2026-10-06T18:34:34.572Z",
+        "lastCycleCompletedAt": "2026-10-06T18:34:34.659Z"
+      },
+      "stage": "active",
+      "rendererFramesPerSecond": 61.581247516879436
+    },
+    {
+      "uptimeMs": 24195.125127000003,
+      "mainMemory": {
+        "rss": 217026560,
+        "heapTotal": 8093696,
+        "heapUsed": 6676136,
+        "external": 3476993,
+        "arrayBuffers": 0
+      },
+      "mainCpuPercent": 16.636905152010605,
+      "mainFileDescriptors": 269,
+      "processPid": 470,
+      "procSelfPid": 7324,
+      "pidNamespaceConsistent": false,
+      "metrics": [
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 470,
+          "type": "Browser",
+          "creationTime": 1791311667070,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 495,
+          "type": "GPU",
+          "creationTime": 0,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 500,
+          "type": "Utility",
+          "creationTime": 0,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 636,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 550,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 551,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 557,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 565,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 566,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 567,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 570,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 576,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 600,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 621,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        }
+      ],
+      "contents": [
+        {
+          "id": 11,
+          "type": "browserView",
+          "pid": 621,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 10,
+          "type": "browserView",
+          "pid": 600,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 9,
+          "type": "browserView",
+          "pid": 576,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 8,
+          "type": "browserView",
+          "pid": 570,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 7,
+          "type": "browserView",
+          "pid": 567,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 6,
+          "type": "browserView",
+          "pid": 566,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 5,
+          "type": "browserView",
+          "pid": 565,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 4,
+          "type": "browserView",
+          "pid": 557,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 3,
+          "type": "browserView",
+          "pid": 551,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 2,
+          "type": "browserView",
+          "pid": 550,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 1,
+          "type": "window",
+          "pid": 636,
+          "listeners": 15,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        }
+      ],
+      "activeTimers": 1,
+      "timeoutCount": 0,
+      "intervalCount": 1,
+      "listeners": {
+        "app": 9,
+        "ipcMain": 1,
+        "browserManager": 1,
+        "automationManager": 2,
+        "contents": 275
+      },
+      "ipc": {
+        "received": {
+          "browser:getAll": 1,
+          "automation:getState": 4,
+          "browser:setBounds": 20,
+          "automation:start": 1,
+          "automation:runNow": 1,
+          "automation:stop": 1
+        },
+        "sent": {
+          "browser:stateChanged": 280,
+          "automation:stateChanged": 9,
+          "automation:seoResult": 20
+        }
+      },
+      "eventLoopDelayMs": {
+        "mean": 20.409275733333335,
+        "max": 32.325631,
+        "p99": 21.463039
+      },
+      "workspaceCount": 10,
+      "state": {
+        "running": false,
+        "cycleInProgress": false,
+        "proxySource": "All Working API",
+        "query": "first, second",
+        "targetWebsite": "fixture.local",
+        "controlledTestHost": "fixture.local",
+        "intervalSec": 600,
+        "browserCount": 10,
+        "maxPages": 20,
+        "browserIds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "cycleNumber": 2,
+        "fetchedProxies": 10,
+        "checkedProxies": 10,
+        "totalProxies": 10,
+        "liveProxies": 10,
+        "assignedBrowsers": 10,
+        "lastCycleStartedAt": "2026-10-06T18:34:51.884Z",
+        "lastCycleCompletedAt": "2026-10-06T18:34:51.907Z"
+      },
+      "stage": "stopped",
+      "rendererFramesPerSecond": 60.975609756086165
+    },
+    {
+      "uptimeMs": 26243.764263,
+      "mainMemory": {
+        "rss": 218284032,
+        "heapTotal": 9404416,
+        "heapUsed": 7204864,
+        "external": 3476364,
+        "arrayBuffers": 0
+      },
+      "mainCpuPercent": 65.92597813072828,
+      "mainFileDescriptors": 269,
+      "processPid": 470,
+      "procSelfPid": 7324,
+      "pidNamespaceConsistent": false,
+      "metrics": [
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 470,
+          "type": "Browser",
+          "creationTime": 1791311667070,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 495,
+          "type": "GPU",
+          "creationTime": 0,
+          "serviceName": "GPU",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 500,
+          "type": "Utility",
+          "creationTime": 0,
+          "serviceName": "network.mojom.NetworkService",
+          "name": "Network Service",
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 636,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 567,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 809,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 815,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 816,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 825,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 839,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 840,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 845,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 857,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        },
+        {
+          "cpu": {
+            "percentCPUUsage": 0,
+            "idleWakeupsPerSecond": 0
+          },
+          "pid": 877,
+          "type": "Tab",
+          "creationTime": 0,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          },
+          "fdCount": null
+        }
+      ],
+      "contents": [
+        {
+          "id": 38,
+          "type": "browserView",
+          "pid": 877,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 37,
+          "type": "browserView",
+          "pid": 857,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 36,
+          "type": "browserView",
+          "pid": 845,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 35,
+          "type": "browserView",
+          "pid": 840,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 33,
+          "type": "browserView",
+          "pid": 825,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 32,
+          "type": "browserView",
+          "pid": 816,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 31,
+          "type": "browserView",
+          "pid": 815,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 30,
+          "type": "browserView",
+          "pid": 809,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 7,
+          "type": "browserView",
+          "pid": 567,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 34,
+          "type": "browserView",
+          "pid": 839,
+          "listeners": 26,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        },
+        {
+          "id": 1,
+          "type": "window",
+          "pid": 636,
+          "listeners": 15,
+          "memory": {
+            "workingSetSize": 0,
+            "peakWorkingSetSize": 0
+          }
+        }
+      ],
+      "activeTimers": 1,
+      "timeoutCount": 0,
+      "intervalCount": 1,
+      "listeners": {
+        "app": 9,
+        "ipcMain": 1,
+        "browserManager": 1,
+        "automationManager": 2,
+        "contents": 275
+      },
+      "ipc": {
+        "received": {
+          "browser:getAll": 1,
+          "automation:getState": 16,
+          "browser:setBounds": 20,
+          "automation:start": 7,
+          "automation:runNow": 1,
+          "automation:stop": 7
+        },
+        "sent": {
+          "browser:stateChanged": 451,
+          "automation:stateChanged": 37,
+          "automation:seoResult": 23
+        }
+      },
+      "eventLoopDelayMs": {
+        "mean": 21.046852618556702,
+        "max": 40.304639,
+        "p99": 32.686079
+      },
+      "workspaceCount": 10,
+      "state": {
+        "running": false,
+        "cycleInProgress": false,
+        "proxySource": "All Working API",
+        "query": "first, second",
+        "targetWebsite": "fixture.local",
+        "controlledTestHost": "fixture.local",
+        "intervalSec": 600,
+        "browserCount": 10,
+        "maxPages": 20,
+        "browserIds": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "cycleNumber": 1,
+        "fetchedProxies": 10,
+        "checkedProxies": 10,
+        "totalProxies": 10,
+        "liveProxies": 10,
+        "assignedBrowsers": 10,
+        "lastCycleStartedAt": "2026-10-06T18:34:54.057Z",
+        "lastCycleCompletedAt": "2026-10-06T18:34:54.075Z"
+      },
+      "stage": "after-recreation",
+      "rendererFramesPerSecond": 60.98170548834223
+    }
+  ],
+  "checks": {
+    "rendererLoaded": true,
+    "defaultsPreserved": true,
+    "startAndAssignment": true,
+    "rotation": true,
+    "stop": true,
+    "workspaceRecreation": true,
+    "exitObserved": true,
+    "noOrphans": null
+  },
+  "startupMs": 688.5154379999999,
+  "workspaceRecreationCounts": [
+    11,
+    11,
+    11
+  ],
+  "shutdownMs": 120.58814700000221,
+  "processObservationValid": false,
+  "survivingChildren": null
+}

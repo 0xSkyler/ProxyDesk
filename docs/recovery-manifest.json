@@ -1,0 +1,30 @@
+{
+  "commit": "32194fdd8236a0486209b61f734f52530800c73a",
+  "installer": "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe",
+  "installerSha256": "01f888ad8fd8d5f9e299504ba579d31c58fb9fd43d6b6efa2cd87ea5c81cdbc1",
+  "files": {
+    "dist/main/BrowserManager.js": "60b953b6010fbcf66e6d1363f4de3c7f14801d845e37a0c422d16bc65278a69d",
+    "dist/main/Logger.js": "79face88cd4d3352e2d2332fc752d8eb7c3a19788ef1bbfa8c8ef84d1da634c3",
+    "dist/main/ProxyManager.js": "84b209b2519ae15906e112423e1b80a91e06c169223981b98c11a17d15f04536",
+    "dist/main/SeoAutomationManager.js": "b4ebd75c688e06a194e271f90d8c732f420fdc00cbdcce3de45c6dbb8fd88125",
+    "dist/main/ipc/registerIpc.js": "768f35a50170fe4abb790eb29e77a00758f0ff14f2b2637e2aa2ce6890a4ade3",
+    "dist/main/main.js": "dc137db9618aa4e2a09f29d83cd01e5f20ec4c6b3f52b03c10a2dd77ff485e64",
+    "dist/preload/preload.js": "07eeb2d8042c8f6c2429c3a32a8303a69c206c0a6273d648558b5d32b169e08c",
+    "dist/proxy/AllWorkingProxyProvider.js": "2d166bfe1f69e2d14a7341d16290a19db61ec9b58a3b7080cd2681f1e94f6c46",
+    "dist/proxy/ProxyParser.js": "89303cbf544fd437aabc9f9db5e8ae46a878f875ef60bb686080e657727e7faf",
+    "dist/proxy/ProxyScorer.js": "adfd5afd601117ff4fa74458f8683ff359c449931493425d3cc4a0a5c2de6e90",
+    "dist/proxy/ProxyScrapeProvider.js": "aeb55b7b845e43abca660eccade4434be949c400d916e4a3cbf50e5aa3afc8cd",
+    "dist/proxy/ProxyValidator.js": "9ab39234baf7fa65104fc39c00276141d7ced3b2dbfa55bf270b5458758b254a",
+    "dist/renderer/assets/index-BZgi7Ish.js": "f347b16ad601c541e1e1e4a283d50e4045b175d8aa77f420bb6f822d71b887c8",
+    "dist/renderer/assets/index-DQKkgqZZ.css": "c948d1fed46cd5107dbbafe69590d9c857014eb24cb14438a327111915b270d2",
+    "dist/renderer/index.html": "35e5dd0139f5ec5b085806eaa49f966e4e731431ec3f6ff7255ee9b68625be60",
+    "dist/shared/constants/countries.js": "cd8bb1b7daf086132b1704da2b48f91a4ead7e5ec19cb8c3fc47e91f73eb8c7c",
+    "dist/shared/constants/index.js": "2d81874db11c73c84b9a2c8948ad0d8f8ae4425c5e51a9cdc8fb96b36a4ea6de",
+    "dist/shared/seo.js": "0d09dcf5aa34aca3d270d326aa8e2c72a825d9114f6b19cb05249d5ed1f73dde",
+    "dist/shared/types/automation.js": "8b70d64c0a95a1120b1ebe40ab86673676f9df9ef19674dd614f50eff5d09a8d",
+    "dist/shared/types/browser.js": "9403c0281464d813ee5f0d17a9b278435180d81fcd2515f43faded5389e25c91",
+    "dist/shared/types/index.js": "fa2268cd008afcf15b493e57d82269579c6458a8b81f890f977bbd3869337c3e",
+    "dist/shared/types/ipc.js": "ad7910dfa05b4b26af72cbcec03ec16876151a11456c49103bc6fcbd26e215f5",
+    "dist/shared/types/proxy.js": "d74ca3b957d8a3014df9d6eb94a564b612c2edf2de47f3d53a7c5f7da6eb2086"
+  }
+}

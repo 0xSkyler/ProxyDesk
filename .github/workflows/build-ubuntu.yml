@@ -1,136 +1,145 @@
-name: Build ProxyDesk v0.5.4 for Ubuntu
+name: Native Linux build and v0.5.4 regression
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
   workflow_dispatch:
+    inputs:
+      soak_seconds:
+        description: Local fixture active seconds per build (60 for CI, 3600+ for soak)
+        default: '60'
+      browsers:
+        description: Concurrent fixture browser count, 1 to 100
+        default: '10'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: linux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-linux:
     runs-on: ubuntu-24.04
-    env:
-      ELECTRON_VERSION: "31.2.1"
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-
-      - name: Install extraction and runtime test dependencies
+          node-version: '20'
+          cache: npm
+      - name: Install runtime test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
-          npm install -g @electron/asar
-
-      - name: Recover packaged v0.5.4 application
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p extracted unpacked recovered
-          7z x "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe" -oextracted
-
-          APP_ARCHIVE="$(find extracted -type f -name 'app-64.7z' | head -1)"
-          test -n "$APP_ARCHIVE"
-          7z x "$APP_ARCHIVE" -ounpacked
-
-          APP_ASAR="$(find unpacked -type f -name 'app.asar' | head -1)"
-          test -n "$APP_ASAR"
-          asar extract "$APP_ASAR" recovered
-
-          node -e "const p=require('./recovered/package.json'); if(p.version!=='0.5.4') throw new Error('Expected v0.5.4'); if(p.main!=='dist/main/main.js') throw new Error('Unexpected main entry'); console.log('Recovered',p.productName,p.version,p.main)"
-
-          if find recovered -type f -name '*.node' -print | grep -q .; then
-            echo "::error::Packaged app contains native Node modules and needs platform-specific rebuild handling."
-            find recovered -type f -name '*.node' -print
-            exit 1
-          fi
-
-      - name: Prepare Linux packaging metadata
-        working-directory: recovered
-        shell: bash
-        run: |
-          set -euxo pipefail
-          node <<'NODE'
-          const fs = require('fs');
-          const p = JSON.parse(fs.readFileSync('package.json','utf8'));
-          p.productName = 'ProxyDesk';
-          p.devDependencies = Object.assign({}, p.devDependencies, {
-            electron: process.env.ELECTRON_VERSION,
-            'electron-builder': '24.13.3'
-          });
-          p.scripts = Object.assign({}, p.scripts, {
-            'package:linux': 'electron-builder --linux AppImage tar.gz --x64 --publish never'
-          });
-          p.build = {
-            appId: 'com.proxydesk.desktop',
-            productName: 'ProxyDesk',
-            asar: true,
-            directories: { output: '../release-linux' },
-            files: ['**/*'],
-            linux: {
-              target: ['AppImage', 'tar.gz'],
-              category: 'Utility',
-              artifactName: 'ProxyDesk-v${version}-linux-${arch}.${ext}'
-            }
-          };
-          fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n');
-          NODE
-
-          npm install --no-audit --no-fund
-
-      - name: Build Ubuntu artifacts
-        working-directory: recovered
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - name: Build from tracked application source
         run: npm run package:linux
-
-      - name: Smoke test packaged AppImage
-        shell: bash
+      - name: Check production archive
+        run: node scripts/check-package.cjs
+      - name: Packaged renderer and lifecycle smoke test
+        run: xvfb-run -a node scripts/benchmark.cjs release-linux/linux-unpacked . .measurements/smoke.json 2 3
+      - name: Verify AppImage startup and clean exit
         run: |
-          set -o pipefail
-          APPIMAGE="$(find release-linux -maxdepth 1 -type f -name '*.AppImage' | head -1)"
-          test -n "$APPIMAGE"
-          chmod +x "$APPIMAGE"
-
-          rm -f /tmp/proxydesk-smoke.log
-          APPIMAGE_EXTRACT_AND_RUN=1 timeout 25s xvfb-run -a "$APPIMAGE" --disable-gpu --no-sandbox > /tmp/proxydesk-smoke.log 2>&1 || rc=$?
-          cat /tmp/proxydesk-smoke.log
-
-          if grep -q "ProxyDesk SEO Tracker Lite ready" /tmp/proxydesk-smoke.log; then
-            echo "Packaged native Linux AppImage smoke test passed."
-            exit 0
-          fi
-
-          echo "::error::Packaged AppImage did not reach the ready state."
-          exit ${rc:-1}
-
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/ProxyDesk-v0.5.4-linux-x86_64.AppImage
+          node scripts/smoke-appimage.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ProxyDesk-v0.5.4-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
+            .measurements/smoke.json
+            .measurements/appimage-smoke.log
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish v0.5.4 release
-        if: github.ref == 'refs/heads/main'
+  compare-runtime:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    needs: build-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+      - run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@v4
+        with:
+          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          path: .measurements/download
+      - name: Prepare packaged runtime and hash-verified reference (benchmark only)
+        run: |
+          mkdir -p .measurements/runtime
+          tar -xzf .measurements/download/ProxyDesk-v0.5.4-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          npm run recover
+          node scripts/compare-reference.cjs
+      - name: Measure original v0.5.4
+        env:
+          SOAK_SECONDS: ${{ inputs.soak_seconds || '60' }}
+          BROWSERS: ${{ inputs.browsers || '10' }}
+        run: xvfb-run -a node scripts/benchmark.cjs .measurements/runtime .recovery/reference .measurements/baseline.json "$SOAK_SECONDS" "$BROWSERS"
+      - name: Measure optimized source
+        if: always()
+        env:
+          SOAK_SECONDS: ${{ inputs.soak_seconds || '60' }}
+          BROWSERS: ${{ inputs.browsers || '10' }}
+        run: xvfb-run -a node scripts/benchmark.cjs .measurements/runtime . .measurements/optimized.json "$SOAK_SECONDS" "$BROWSERS"
+      - name: Compare saved measurements
+        if: always()
+        run: |
+          node scripts/compare-benchmarks.cjs .measurements/baseline.json .measurements/optimized.json .measurements/comparison.md
+          cat .measurements/comparison.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ProxyDesk-Linux-baseline-comparison
+          path: .measurements/*.json
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ProxyDesk-Linux-comparison-report
+          path: .measurements/comparison.md
+          retention-days: 30
+
+  publish-linux:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-linux, compare-runtime]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          path: release-linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: ProxyDesk-Linux-comparison-report
+          path: release-linux
+      - name: Publish verified Linux release
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
-          set -euxo pipefail
-          TAG="v0.5.4"
-
+          set -euo pipefail
+          TAG="$(node -p 'require("./package.json").linuxRelease')"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG"               release-linux/*.AppImage               release-linux/*.tar.gz               "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe"               --clobber
-          else
-            gh release create "$TAG"               release-linux/*.AppImage               release-linux/*.tar.gz               "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe"               --title "ProxyDesk v0.5.4"               --notes "ProxyDesk v0.5.4 builds for Windows and Ubuntu x64. The Ubuntu AppImage is rebuilt natively from the packaged v0.5.4 Electron application and smoke-tested on Ubuntu 24.04 before release."
+            echo "$TAG is already published; its artifacts will not be overwritten."
+            exit 0
           fi
+          cd release-linux
+          sha256sum *.AppImage *.tar.gz > SHA256SUMS
+          cd ..
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md --target "$GITHUB_SHA" --title "ProxyDesk v0.5.4 - Linux reliability update 1" --notes "Native source build. Original v0.5.4 UI and task behavior retained. Lifecycle cancellation, shutdown cleanup, log bounds and dependency packaging improvements. Ubuntu CI tests, AppImage renderer smoke checks and paired original/optimized fixture benchmarks passed. Longer VPS soak and live search regression remain environment-specific checks."
