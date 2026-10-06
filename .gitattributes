@@ -1,0 +1,2 @@
+# Preserve the recovered renderer byte-for-byte on every checkout platform.
+src/renderer/** -text

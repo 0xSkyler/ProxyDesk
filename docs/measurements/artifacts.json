@@ -1,0 +1,10 @@
+{
+  "ProxyDesk-v0.5.4-linux-x64.tar.gz": {
+    "bytes": 101624526,
+    "sha256": "71069d4a57ba53b5662a342ef06bdad32e0462dfe713dd867f0c22257734c5e0"
+  },
+  "ProxyDesk-v0.5.4-linux-x86_64.AppImage": {
+    "bytes": 107077608,
+    "sha256": "384eb918b32982d6281e2dd3cdecff1bf62e8be141e4261182539d1713ef5729"
+  }
+}

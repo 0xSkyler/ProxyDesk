@@ -1,0 +1,46 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.scoreProxy = scoreProxy;
+exports.rankProxies = rankProxies;
+/**
+ * Composite 0-100 quality score used for ranking.
+ * Score = latency component + reliability component + verified-country bonus.
+ */
+function scoreProxy(proxy) {
+    if (proxy.status === 'dead')
+        return 0;
+    const latencyScore = latencyComponent(proxy.latencyMs);
+    const reliabilityScore = reliabilityComponent(proxy.successCount, proxy.failureCount);
+    const countryBonus = proxy.countryVerified ? 10 : 0;
+    // A proxy Google has actually served a real results page to (see
+    // GoogleTrustChecker) is worth ranking above one that's merely
+    // network-reachable but unverified against Google specifically; one
+    // Google is actively serving a CAPTCHA to should sink below almost any
+    // untested proxy, since assigning it just reproduces the exact problem
+    // this check exists to catch. Both are deliberately smaller than the
+    // country bonus so a confirmed-country match still isn't overridden by
+    // Google trust alone.
+    const googleAdjustment = proxy.googleStatus === 'trusted' ? 8 : proxy.googleStatus === 'blocked' ? -35 : 0;
+    const raw = latencyScore * 0.5 + reliabilityScore * 0.4 + countryBonus + googleAdjustment;
+    return Math.max(0, Math.min(100, Math.round(raw)));
+}
+function latencyComponent(latencyMs) {
+    if (latencyMs == null)
+        return 40; // unknown latency: neutral-ish score
+    if (latencyMs <= 200)
+        return 100;
+    if (latencyMs >= 5000)
+        return 0;
+    // Linear falloff between 200ms (100) and 5000ms (0).
+    return Math.round(100 - ((latencyMs - 200) / (5000 - 200)) * 100);
+}
+function reliabilityComponent(successCount, failureCount) {
+    const total = successCount + failureCount;
+    if (total === 0)
+        return 50; // never tested: neutral
+    return Math.round((successCount / total) * 100);
+}
+function rankProxies(proxies) {
+    return [...proxies].sort((a, b) => b.score - a.score);
+}
+//# sourceMappingURL=ProxyScorer.js.map
