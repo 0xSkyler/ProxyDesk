@@ -1,9 +1,9 @@
 # Linux optimization review
 
-Implemented locally on branch `codex/linux-reliability`. The remote repository
-has not been changed: automatic approval review rejected publication because the
-request did not explicitly authorize a remote branch push. A draft PR and CI
-execution are pending that approval; no release has been overwritten.
+Published for review in [PR #3](https://github.com/0xSkyler/ProxyDesk/pull/3) after
+explicit authorization to push and deploy. Main-branch CI publishes a separate
+`v0.5.4-linux.1` Linux release after all required jobs pass; the existing Windows
+release is retained. See the README for the checksum-verified VPS installer.
 
 ## Changes
 

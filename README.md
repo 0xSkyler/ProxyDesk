@@ -58,6 +58,40 @@ benchmark score. No Chromium concurrency limit or visit queue is introduced.
 `NODE_ENV=development` explicitly selects the optional localhost:5173 dev server;
 ordinary source runs load the committed renderer assets directly.
 
+## Install the verified release on a VPS
+
+Use Ubuntu 24.04 x64 with a persistent desktop session. Open a terminal inside
+that desktop (for example through RustDesk), as its regular user with sudo:
+
+```sh
+sudo apt-get update && sudo apt-get install -y curl
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/main/deploy/install-ubuntu.sh -o /tmp/proxydesk-install.sh && bash /tmp/proxydesk-install.sh --software-rendering
+```
+
+The installer verifies the release SHA-256, installs the tar distribution under
+root-owned `/opt/proxydesk`, configures its sandbox helper and Ubuntu AppArmor
+namespace permission, then launches a systemd user service. The service owns the
+whole process group, allows 15 seconds for shutdown and restarts failed launches.
+Desktop login starts the service; closing its window normally stops it. It does
+not require Node/npm, FUSE or a permanent SSH connection. Software rendering is
+selected for this VPS command; omit that option to use normal GPU rendering.
+
+Enter the existing settings/keywords and click Start in the application. Keep the
+desktop session active. App restarts preserve the reference behavior: tasks do
+not restart automatically, and its input settings return to the original defaults.
+
+```sh
+systemctl --user status proxydesk
+journalctl --user -u proxydesk -n 50 --no-pager
+systemctl --user stop proxydesk
+```
+
+Main-branch CI publishes the immutable `v0.5.4-linux.1` release only after native
+build, packaged smoke tests and original/optimized fixture comparison succeed.
+The original Windows release is retained. The installer checks host prerequisites;
+the target VPS's display, sandbox configuration and live proxy/search behavior
+still need validation there.
+
 ## Reliability changes
 
 - Wait for owned work during quit, close views before session cleanup, and bound
