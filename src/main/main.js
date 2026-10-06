@@ -44,6 +44,10 @@ async function createWindowShell() {
             webSecurity: true
         }
     });
+    // Electron's BrowserView adds one closed listener per attached view. Allow
+    // the existing 100-workspace maximum plus shell lifecycle listeners without
+    // suppressing warnings globally; destroyBrowser still removes each view.
+    mainWindow.setMaxListeners(browser_1.BROWSER_IDS.length + 10);
     browserManager.attachWindow(mainWindow);
     mainWindow.on('closed', () => {
         mainWindow = null;
