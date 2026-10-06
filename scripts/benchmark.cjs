@@ -105,7 +105,7 @@ function processStart(pid) {
             await page.getByRole('button', { name: 'Stop SEO Tracker', exact: true }).click();
             await page.waitForFunction(() => window.app.automation.getState().then((state) => !state.running));
             const details = await application.evaluate(({ webContents }) => ({
-                managed: global.__probe.browser.getAll().map((browser) => ({ id: browser.id, contentId: browser.view.webContents.id })),
+                managed: Array.from(global.__probe.browser.browsers.values()).map((browser) => ({ id: browser.id, contentId: browser.view.webContents.id })),
                 contents: webContents.getAllWebContents().filter((wc) => !wc.isDestroyed()).map((wc) => ({ id: wc.id, type: wc.getType(), url: wc.getURL() })),
                 state: global.__probe.automation.getState()
             }));
