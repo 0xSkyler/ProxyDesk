@@ -7,9 +7,10 @@ const profile = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'proxydesk
 const target = path.resolve(process.argv[2]);
 if (target.endsWith('.AppImage')) fs.chmodSync(target, 0o755);
 let app;
+const sandboxEnabled = process.env.PROXYDESK_TEST_SANDBOX === '1';
 (async () => {
     try {
-        app = await _electron.launch({ executablePath: target, args: ['--no-sandbox', '--disable-gpu', `--user-data-dir=${profile}`], env: { ...process.env, NODE_ENV: 'production', APPIMAGE_EXTRACT_AND_RUN: '1' }, timeout: 60000 });
+        app = await _electron.launch({ executablePath: target, args: [...(sandboxEnabled ? [] : ['--no-sandbox']), '--disable-gpu', `--user-data-dir=${profile}`], env: { ...process.env, NODE_ENV: 'production', APPIMAGE_EXTRACT_AND_RUN: '1' }, timeout: 60000 });
         const page = await app.firstWindow();
         await page.getByRole('heading', { name: 'ProxyDesk SEO Tracker Lite', exact: true }).waitFor();
         await page.waitForFunction(() => document.querySelectorAll('.browser-card').length === 10);
@@ -18,6 +19,6 @@ let app;
         await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
         await page.getByText('Enter at least one keyword and a target website.', { exact: true }).waitFor();
         await app.close(); app = null;
-        console.log(JSON.stringify({ artifact: path.basename(target), rendererLoaded: true, workspaceCount: 10, inputValidation: true, gracefulClose: true }));
+        console.log(JSON.stringify({ artifact: path.basename(target), sandboxEnabled, rendererLoaded: true, workspaceCount: 10, inputValidation: true, gracefulClose: true }));
     } finally { if (app) await app.close().catch(() => {}); fs.rmSync(profile, { recursive: true, force: true }); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

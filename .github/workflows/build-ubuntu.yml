@@ -33,7 +33,7 @@ jobs:
       - name: Install runtime test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libxss1 apparmor
       - run: npm ci --no-audit --no-fund
       - run: npm run check
       - run: npm test
@@ -47,6 +47,22 @@ jobs:
         run: |
           xvfb-run -a node scripts/smoke-runtime.cjs release-linux/ProxyDesk-v0.5.4-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
+      - name: Verify installed production sandbox
+        run: |
+          sudo install -d -m 755 /opt/proxydesk/ci
+          sudo cp -a release-linux/linux-unpacked/. /opt/proxydesk/ci/
+          sudo chown -R root:root /opt/proxydesk/ci
+          sudo chmod -R go-w /opt/proxydesk/ci
+          sudo chmod 755 /opt/proxydesk/ci/proxydesk
+          sudo chmod 4755 /opt/proxydesk/ci/chrome-sandbox
+          python3 - <<'PY'
+          from pathlib import Path
+          installer = Path('deploy/install-ubuntu.sh').read_text()
+          profile = installer.split("<<'PROFILE'\n", 1)[1].split('\nPROFILE', 1)[0]
+          Path('/tmp/proxydesk-linux').write_text(profile + '\n')
+          PY
+          sudo apparmor_parser -r /tmp/proxydesk-linux
+          PROXYDESK_TEST_SANDBOX=1 xvfb-run -a node scripts/smoke-runtime.cjs /opt/proxydesk/ci/proxydesk
       - uses: actions/upload-artifact@v4
         if: always()
         with:
