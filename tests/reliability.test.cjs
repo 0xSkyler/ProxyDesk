@@ -36,6 +36,53 @@ test('Stop cancels long monitor sleeps immediately and detaches abort listener',
     const work = cancellableDelay(30000, controller.signal); controller.abort(); await work;
     await cancellableDelay(30000, controller.signal);
 });
+test('100 sleeping monitors keep cancellation listeners bounded and release every timer on rotation and Stop', async () => {
+    const { getEventListeners, setMaxListeners, getMaxListeners } = require('node:events');
+    class RuntimeAbortController extends AbortController {
+        constructor() { super(); setMaxListeners(10, this.signal); }
+    }
+    const timers = new Set();
+    const { SeoAutomationManager } = loadTree(root, {}, {
+        AbortController: RuntimeAbortController,
+        setInterval: () => 1, clearInterval() {},
+        setTimeout: (fn) => { timers.add(fn); return fn; }, clearTimeout: (fn) => timers.delete(fn)
+    })('main/SeoAutomationManager.js');
+    const ids = Array.from({ length: 100 }, (_, i) => i + 1);
+    let searches = 0;
+    const browser = {
+        cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {},
+        startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true,
+        broadcastSearch: async () => { searches++; return { status: 'no-match' }; }
+    };
+    const proxies = { cancelCurrentFetch() {}, fetchAssignDirect: async (values, assign) => {
+        for (const browserId of values) assign({ browserId, proxy: { host: '127.0.0.1', port: 8080 } });
+    } };
+    const automation = new SeoAutomationManager(proxies, browser, async () => ids);
+    const warnings = [];
+    const recordWarning = (warning) => warnings.push(warning);
+    process.on('warning', recordWarning);
+    try {
+        await automation.start({ query: 'first, second', targetWebsite: 'fixture.local', browserCount: 100 });
+        for (let i = 0; i < 10; i++) await tick();
+        const oldSignal = automation.cycleController.signal;
+        assert.equal(searches, 100);
+        assert.equal(timers.size, 100);
+        assert.equal(getEventListeners(oldSignal, 'abort').length, 100);
+        assert.equal(getMaxListeners(oldSignal), 100);
+        await automation.runNow(); await tick();
+        assert.equal(searches, 200);
+        assert.equal(getEventListeners(oldSignal, 'abort').length, 0);
+        assert.equal(timers.size, 100);
+        const signal = automation.cycleController.signal;
+        automation.stop(); await tick();
+        assert.equal(timers.size, 0);
+        assert.equal(getEventListeners(signal, 'abort').length, 0);
+        assert.equal(warnings.filter((warning) => warning.name === 'MaxListenersExceededWarning').length, 0);
+    } finally {
+        automation.stop();
+        process.removeListener('warning', recordWarning);
+    }
+});
 test('destruction closes views before stalled storage cleanup and invalidates workers', async () => {
     const { manager, electron, intervals } = await managerFixture();
     manager.configureKeepAlive(60000, 1, false);

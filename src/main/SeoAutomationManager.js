@@ -3,9 +3,18 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SeoAutomationManager = void 0;
 const node_events_1 = require("node:events");
 const automation_1 = require("../shared/types/automation");
+const browser_1 = require("../shared/types/browser");
 const seo_1 = require("../shared/seo");
 const Logger_1 = require("./Logger");
 const { cancellableDelay } = require("./runtime");
+function createCycleController() {
+    const controller = new AbortController();
+    // One sleeping monitor per existing workspace is expected, not a leak.
+    // Keep this allowance local and finite; Stop/rotation still detach all of
+    // these listeners synchronously through cancellableDelay.
+    node_events_1.setMaxListeners(browser_1.BROWSER_IDS.length, controller.signal);
+    return controller;
+}
 /**
  * Single-purpose SEO Tracker orchestration:
  *
@@ -22,7 +31,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
     timer = null;
     generation = 0;
     pendingCycle = false;
-    cycleController = new AbortController();
+    cycleController = createCycleController();
     state = {
         running: false,
         cycleInProgress: false,
@@ -77,7 +86,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.generation += 1;
         const generation = this.generation;
         this.cycleController.abort();
-        this.cycleController = new AbortController();
+        this.cycleController = createCycleController();
         this.pendingCycle = false;
         // Publish state before any browser preparation. The Start button therefore
         // reacts instantly even if Electron still has browser shells to create.
@@ -201,7 +210,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             return;
         const generation = this.generation;
         this.cycleController.abort();
-        this.cycleController = new AbortController();
+        this.cycleController = createCycleController();
         const cycleNumber = this.state.cycleNumber + 1;
         const browserIds = [...this.state.browserIds];
         const { query, targetWebsite, controlledTestHost, maxPages } = this.state;

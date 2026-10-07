@@ -48,5 +48,5 @@
       "artifactName": "ProxyDesk-v${version}-linux-${arch}.${ext}"
     }
   },
-  "linuxRelease": "v0.5.4-linux.1"
+  "linuxRelease": "v0.5.4-linux.2"
 }

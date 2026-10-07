@@ -65,7 +65,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/main/deploy/install-ubuntu.sh -o /tmp/proxydesk-install.sh && bash /tmp/proxydesk-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.4-linux.2/deploy/install-ubuntu.sh -o /tmp/proxydesk-install.sh && bash /tmp/proxydesk-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -75,6 +75,9 @@ whole process group, allows 15 seconds for shutdown and restarts failed launches
 Desktop login starts the service; closing its window normally stops it. It does
 not require Node/npm, FUSE or a permanent SSH connection. Software rendering is
 selected for this VPS command; omit that option to use normal GPU rendering.
+Reopening through the desktop launcher imports the current display credentials,
+clears absent old display variables and resets a failed start limit before retrying.
+The crash restart rate remains bounded while an unavailable display stays unavailable.
 
 Enter the existing settings/keywords and click Start in the application. Keep the
 desktop session active. App restarts preserve the reference behavior: tasks do
@@ -86,7 +89,7 @@ journalctl --user -u proxydesk -n 50 --no-pager
 systemctl --user stop proxydesk
 ```
 
-Main-branch CI publishes the immutable `v0.5.4-linux.1` release only after native
+Main-branch CI publishes the immutable `v0.5.4-linux.2` release only after native
 build, packaged smoke tests and original/optimized fixture comparison succeed.
 The original Windows release is retained. The installer checks host prerequisites;
 the target VPS's display, sandbox configuration and live proxy/search behavior
@@ -130,6 +133,9 @@ fixture browsers. Both benchmarks execute sequentially, so allow twice the input
 duration plus build/cleanup overhead; the comparison job has a 180-minute ceiling.
 Repeat on the intended VPS with its RAM/vCPU/display/proxy characteristics.
 A short run cannot establish leak-free 24/7 operation.
+The harness checks automatic rotation when a run exceeds the configured interval,
+then checks a further manual rotation. Probe/IPC calls have deadlines so a frozen
+renderer produces a failed report. See [sustained testing](docs/SUSTAINED_TESTING.md).
 
 ## Remaining constraints
 
