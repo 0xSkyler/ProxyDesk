@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Run from the Ubuntu desktop terminal as the account that will own the app.
 # Root privileges are used only for packages, /opt and sandbox installation.
-release_tag=v0.5.4-linux.1
+release_tag=v0.5.4-linux.2
 software=0
 if [[ ${1:-} == --software-rendering ]]; then software=1; shift; fi
 if (( $# )); then echo 'Usage: install-ubuntu.sh [--software-rendering]' >&2; exit 2; fi
@@ -86,8 +86,16 @@ cat > "$HOME/.local/bin/proxydesk-session" <<'LAUNCH'
 #!/usr/bin/env bash
 set -euo pipefail
 for name in DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS; do
-    if [[ -n ${!name:-} ]]; then systemctl --user import-environment "$name"; fi
- done
+    if [[ -n ${!name:-} ]]; then
+        systemctl --user import-environment "$name"
+    else
+        systemctl --user unset-environment "$name"
+    fi
+done
+# A lost display can exhaust the service's bounded crash-restart allowance.
+# A new desktop launch is an explicit retry with the new session environment.
+# A never-loaded unit has nothing to reset. The start reports launch failures.
+systemctl --user reset-failed proxydesk.service 2>/dev/null || true
 systemctl --user start proxydesk.service
 LAUNCH
 chmod 755 "$HOME/.local/bin/proxydesk-session"
@@ -103,8 +111,13 @@ cp "$HOME/.config/autostart/proxydesk.desktop" "$HOME/.local/share/applications/
 sudo loginctl enable-linger "$USER"
 systemctl --user daemon-reload
 for name in DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS; do
-    if [[ -n ${!name:-} ]]; then systemctl --user import-environment "$name"; fi
- done
+    if [[ -n ${!name:-} ]]; then
+        systemctl --user import-environment "$name"
+    else
+        systemctl --user unset-environment "$name"
+    fi
+done
+systemctl --user reset-failed proxydesk.service 2>/dev/null || true
 systemctl --user restart proxydesk.service
 sleep 2
 systemctl --user --no-pager --full status proxydesk.service

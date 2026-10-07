@@ -1,0 +1,86 @@
+{
+  "sourceCommit": "29abe8db55052fd06eacdf6eaa83873520b24f39",
+  "ubuntuCiRun": "https://github.com/0xSkyler/ProxyDesk/actions/runs/37571710814",
+  "activeSecondsPerApplication": 630,
+  "nativeBrowsers": 10,
+  "fixture": "local HTTP proxy/page fixtures; external search discovery substituted",
+  "productionUiUnchanged": true,
+  "procMetricsAndOrphans": "unavailable in local PID view; Ubuntu CI observes no survivors in its separate 60-second checks",
+  "harnessSha256": {
+    "scripts/benchmark.cjs": "433dc51663f8bd30e7afcc550d35d1a545f22d974ffe1266384f2d07bc90901b",
+    "scripts/benchmark-state.cjs": "cee9855c75ab59145036e6b32de3201783e1c375a56bcdb82a257f530a0edc5a",
+    "scripts/probe-entry.cjs": "f584665ceceb6488a3b102a8986f841e083f21d1e0e749f721b7830030defe7c"
+  },
+  "reports": {
+    "baseline": {
+      "checks": {
+        "rendererLoaded": true,
+        "defaultsPreserved": true,
+        "startAndAssignment": true,
+        "automaticRotation": true,
+        "rotation": true,
+        "stop": true,
+        "workspaceRecreation": true,
+        "exitObserved": true,
+        "noOrphans": null
+      },
+      "automaticCyclesCompleted": 1,
+      "workspaceRecreationCounts": [
+        11,
+        11,
+        11
+      ],
+      "rawSha256": "5c45ca6d4f4a28a26f07e17a1f58d0352611e0b4acd1ab20070208d69b1f501d",
+      "gzipSha256": "0eb3f849cd92ec76eac3bdc6add679b7fe9071b7c4aa5045f560f72db8d1c0d4",
+      "rawBytes": 1029491,
+      "gzipBytes": 19181
+    },
+    "optimized": {
+      "checks": {
+        "rendererLoaded": true,
+        "defaultsPreserved": true,
+        "startAndAssignment": true,
+        "automaticRotation": true,
+        "rotation": true,
+        "stop": true,
+        "workspaceRecreation": true,
+        "exitObserved": true,
+        "noOrphans": null
+      },
+      "automaticCyclesCompleted": 1,
+      "workspaceRecreationCounts": [
+        11,
+        11,
+        11
+      ],
+      "rawSha256": "d331b7ce4f00e6247c2c5022d5ccd85c4476a8bab3b3f43d3d709348b7bbdfa6",
+      "gzipSha256": "ae4552800d013aa7ac8dec3bc6a3e1bfa9880a8aeafe4f00dc5e54ad88d16e6c",
+      "rawBytes": 1025685,
+      "gzipBytes": 17848
+    }
+  },
+  "native20Check": {
+    "activeSeconds": 60,
+    "nativeBrowsers": 20,
+    "checks": {
+      "rendererLoaded": true,
+      "defaultsPreserved": true,
+      "startAndAssignment": true,
+      "automaticRotation": null,
+      "rotation": true,
+      "stop": true,
+      "workspaceRecreation": true,
+      "exitObserved": true,
+      "noOrphans": null
+    },
+    "workspaceRecreationCounts": [
+      21,
+      21,
+      21
+    ],
+    "rawSha256": "214b0d81cef53ff3a6f5c6d4d23df47e610752ce796336225d87eed6198cc910",
+    "gzipSha256": "595186687bb40b72bb9c2dd6289978361efa16e66184ef3e9babb3fd5d42e23a",
+    "rawBytes": 220241,
+    "gzipBytes": 5840
+  }
+}
