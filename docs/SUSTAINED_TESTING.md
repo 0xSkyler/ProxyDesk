@@ -42,6 +42,29 @@ report is saved in the same JSON output location.
 
 ## Reproducible extended comparison
 
+The saved [comparison](measurements/extended-local/comparison.md) and
+[summary with SHA-256 hashes](measurements/extended-local/summary.json) record
+630 active seconds per application, ten native browsers, automatic rotation,
+manual rotation, Stop, three pool recreation rounds and normal close. Both runs
+passed these checks. Raw JSON is retained in compressed
+[baseline](measurements/extended-local/baseline.json.gz) and
+[optimized](measurements/extended-local/optimized.json.gz) reports; use `gzip -dc`
+to read them. Local orphan/process-total metrics remain unavailable. The linked
+Ubuntu CI run separately verifies no surviving child processes.
+
+In this run, mean IPC fell from 7.93 to 6.03 messages/second and mean main-process
+timers from 15.77 to 10.25. Main CPU was 3.69% in both applications and UI frame
+cadence remained about 61 fps. Main RSS growth was 7.50 versus 7.13 MiB; this does
+not establish absence of a leak or a dramatic memory improvement. These compare
+the recovered original against the full optimized tree, including the earlier
+Linux release's lifecycle and IPC changes.
+
+A separate 60-second [20-native-browser run](measurements/extended-local/native-20.json.gz)
+passed Start, manual rotation, Stop and three pool recreation rounds, with exactly
+21 contents (20 workspaces plus the main renderer) after every round. Its local
+orphan observation is also unavailable. The 100-monitor cancellation regression
+remains a simulated-browser test.
+
 Use a separate test checkout on Ubuntu 24.04 with Node 20 and Xvfb/runtime
 libraries as listed in `.github/workflows/build-ubuntu.yml`. The harness creates
 temporary instrumented copies and separate profiles. It does not modify the
