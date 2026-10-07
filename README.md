@@ -104,6 +104,8 @@ still need validation there.
 - Cancel in-page Keep Alive timers/animation frames and the Google live observer
   on Stop/rotation/disposal; preserve scroll durations and link-selection rules.
 - Release the losing timeout in successful DOM races.
+- Cancel unread proxy API error responses so streamed failures release their
+  requests while preserving the same HTTP error messages and timeout.
 - Close pooled session connections when proxy routing changes.
 - Coalesce only bounds updates per animation frame and skip identical native
   geometry/state writes. Status channels, payloads and renderer UI remain intact.

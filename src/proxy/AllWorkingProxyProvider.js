@@ -21,6 +21,10 @@ async function fetchAllWorkingProxyText(signal) {
             signal: controller.signal
         });
         if (!response.ok) {
+            // fetch does not release an unread body merely because we throw.
+            // Cancel streamed error responses so repeated API failures cannot
+            // retain a connection/body indefinitely between rotation attempts.
+            await response.body?.cancel().catch(() => undefined);
             throw new Error(`Proxy API returned HTTP ${response.status}.`);
         }
         const text = await response.text();

@@ -6,6 +6,14 @@ keyword order, cycle timing and task restart behavior.
 
 ## Demonstrated defects and fixes
 
+Five HTTP 503 fixture responses whose bodies never ended left five live unread
+requests after the caller had already reported the status errors. The proxy API
+provider now cancels an unused error-response body before throwing the same
+HTTP status error. Local streaming-server tests verify that repeated failures
+leave zero unfinished error responses and that cancellation failure still
+preserves the HTTP error message. The 15-second request timeout and successful
+response parsing are unchanged.
+
 Electron 31.2.1 bundles Node 20.15.0. With 100 no-match monitors, the cycle's
 AbortSignal had 100 expected sleeping workers and emitted a
 MaxListenersExceededWarning at 11 listeners. Stop removed all 100. Current
