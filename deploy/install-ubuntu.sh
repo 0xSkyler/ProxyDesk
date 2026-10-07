@@ -94,7 +94,8 @@ for name in DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_
 done
 # A lost display can exhaust the service's bounded crash-restart allowance.
 # A new desktop launch is an explicit retry with the new session environment.
-systemctl --user reset-failed proxydesk.service
+# A never-loaded unit has nothing to reset. The start reports launch failures.
+systemctl --user reset-failed proxydesk.service 2>/dev/null || true
 systemctl --user start proxydesk.service
 LAUNCH
 chmod 755 "$HOME/.local/bin/proxydesk-session"
@@ -116,7 +117,7 @@ for name in DISPLAY XAUTHORITY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_
         systemctl --user unset-environment "$name"
     fi
 done
-systemctl --user reset-failed proxydesk.service
+systemctl --user reset-failed proxydesk.service 2>/dev/null || true
 systemctl --user restart proxydesk.service
 sleep 2
 systemctl --user --no-pager --full status proxydesk.service
