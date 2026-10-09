@@ -75,12 +75,21 @@ function processStart(pid) {
         assert.deepEqual(defaults, ['', '', '', '10', '20', '600']); report.checks.defaultsPreserved = true;
         await application.evaluate(() => global.__probe.resetCpu());
         await pause(5000); await snapshot('idle', page);
-        await page.getByLabel('Keywords (comma separated)').fill('first, second');
+        const keywordInput = page.locator('.tracker-controls label').filter({ hasText: 'Keywords' }).locator('input');
+        const fixtureKeywords = count > 1 ? 'first, second' : 'first';
+        await keywordInput.fill(fixtureKeywords);
         await page.getByLabel('Target website', { exact: true }).fill('fixture.local');
         await page.getByLabel('Browsers', { exact: true }).fill(String(count));
         await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
         await waitForAutomation(page, (state, number) => state.running && state.cycleNumber >= 1 && !state.cycleInProgress && state.assignedBrowsers === number, count);
         report.checks.startAndAssignment = true;
+        const firstCycleSearches = await application.evaluate(() => global.__probe.searches.slice(0, global.__probe.automation.getState().browserIds.length));
+        report.firstCycleSearches = firstCycleSearches;
+        if (metadata.probeOriginalMain.startsWith('src/')) {
+            const expectedQueries = Array.from({ length: count }, (_, index) => count > 1 && index % 2 === 1 ? 'second' : 'first');
+            assert.deepEqual(firstCycleSearches.map(({ query }) => query), expectedQueries);
+            report.checks.concurrentKeywords = true;
+        }
         await snapshot('active-start', page);
         const activeStart = performance.now();
         while (performance.now() - activeStart < activeMs) { await pause(Math.min(5000, activeMs - (performance.now() - activeStart))); await snapshot('active', page); }
@@ -100,6 +109,7 @@ function processStart(pid) {
         const counts = [];
         report.workspaceRecreationDetails = [];
         for (let round = 0; round < 3; round++) {
+            await keywordInput.fill('first');
             await page.getByLabel('Browsers', { exact: true }).fill('1');
             await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
             await waitForAutomation(page, (state) => state.running && state.cycleNumber >= 1 && !state.cycleInProgress && state.browserIds.length === 1 && state.assignedBrowsers === 1);

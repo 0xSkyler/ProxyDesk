@@ -27,7 +27,7 @@ app.on('web-contents-created', (_event, wc) => {
     const send = wc.send.bind(wc);
     wc.send = (channel, ...args) => { ipc.sent[channel] = (ipc.sent[channel] || 0) + 1; return send(channel, ...args); };
 });
-const probe = global.__probe = { started, ipc };
+const probe = global.__probe = { started, ipc, searches: [] };
 let lastCpu = process.cpuUsage(), lastCpuAt = performance.now();
 probe.resetCpu = () => { lastCpu = process.cpuUsage(); lastCpuAt = performance.now(); };
 const mainDir = path.dirname(path.resolve(__dirname, meta.probeOriginalMain));
@@ -43,6 +43,7 @@ if (process.env.PROXYDESK_FIXTURE_API) {
     global.fetch = (url, options) => nativeFetch(url === 'http://169.58.35.69/data/all-working.txt' ? process.env.PROXYDESK_FIXTURE_API : url, options);
     const module = require(path.join(mainDir, 'BrowserManager.js'));
     module.BrowserManager.prototype.broadcastSearch = async function (id, query) {
+        probe.searches.push({ browserId: id, query });
         const url = `${process.env.PROXYDESK_FIXTURE_SITE}/article/${encodeURIComponent(query)}`;
         await this.get(id).view.webContents.loadURL(url);
         return { browserId: id, status: 'matched', interactionStatus: 'opened', matchedUrl: url, ranAt: new Date().toISOString() };

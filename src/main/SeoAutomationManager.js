@@ -81,6 +81,9 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const browserCount = (0, automation_1.normalizeBrowserCount)(config.browserCount);
         const maxPages = (0, automation_1.normalizeSeoMaxPages)(config.maxPages);
         const intervalSec = (0, automation_1.normalizeAutomationIntervalSeconds)(config.intervalSec);
+        if (keywords.length > browserCount) {
+            throw new Error(`Select at least ${keywords.length} browsers to run all keywords at the same time.`);
+        }
         this.stopTimerOnly();
         this.proxyManager.cancelCurrentFetch();
         this.generation += 1;
@@ -215,7 +218,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const browserIds = [...this.state.browserIds];
         const { query, targetWebsite, controlledTestHost, maxPages } = this.state;
         const keywords = parseAutomationKeywords(query);
-        const cycleQuery = keywords[(cycleNumber - 1) % keywords.length] ?? query;
+        const browserQueries = new Map(browserIds.map((browserId, index) => [browserId, keywords[index % keywords.length] ?? query]));
         this.state = {
             ...this.state,
             cycleInProgress: true,
@@ -242,7 +245,8 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             await this.proxyManager.fetchAssignDirect(browserIds, (assignment) => {
                 if (!this.isCurrent(generation))
                     return;
-                seoTasks.push(this.handleAssignment(generation, cycleNumber, assignment, cycleQuery, targetWebsite, controlledTestHost, maxPages));
+                const browserQuery = browserQueries.get(assignment.browserId) ?? query;
+                seoTasks.push(this.handleAssignment(generation, cycleNumber, assignment, browserQuery, targetWebsite, controlledTestHost, maxPages));
             }, (checked, total, working, assigned, fetched) => {
                 if (!this.isCurrent(generation))
                     return;
@@ -265,7 +269,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                 lastCycleCompletedAt: new Date().toISOString()
             };
             this.emitState();
-            Logger_1.logger.info('application', `SEO cycle ${cycleNumber} (${cycleQuery}) complete: ${this.state.liveProxies} available, ` +
+            Logger_1.logger.info('application', `SEO cycle ${cycleNumber} (${keywords.join(', ')}) complete: ${this.state.liveProxies} available, ` +
                 `${this.state.assignedBrowsers}/${browserIds.length} browser(s) assigned.`);
         }
         catch (err) {

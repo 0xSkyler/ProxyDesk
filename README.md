@@ -6,6 +6,16 @@ React renderer is a committed production bundle; original JSX/TS and source maps
 were not present in the installer. This is a deterministic recovered application
 tree, not a claim that the original development sources were recovered.
 
+## Simultaneous keywords
+
+Enter comma-separated keywords and select at least one browser for each keyword.
+Every cycle assigns the keywords across the existing browser fleet in order and
+runs them at the same time. For example, three browsers with `first, second`
+run `first`, `second`, and `first`. Rotation keeps the same assignment and only
+refreshes the proxies and browser sessions. All existing target matching, Google
+challenge handling, result opening, Keep Alive, proxy fetching and controls are
+unchanged.
+
 ## Build and run
 
 Ubuntu 24.04 x64, Node 20:

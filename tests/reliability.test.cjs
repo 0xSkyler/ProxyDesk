@@ -153,19 +153,28 @@ test('stale preparation failure cannot overwrite a newer Start', async () => {
     const work = automation.start({ query: 'a', targetWebsite: 'example.test', browserCount: 1 }); automation.stop(); preparation.resolve([]); await work;
     assert.equal(automation.getState().lastError, undefined);
 });
-test('keyword ordering, concurrent assignment, browser bounds and Stop behavior remain', async () => {
+test('all keywords run concurrently across the existing browser fleet', async () => {
     const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
     const assignments = [], searches = [], enabled = [];
     const browser = { cancelMeasurementSession() {}, setBrowserKeepAlive(id, value) { enabled.push([id, value]); }, assignProxy: async (id, proxy) => assignments.push([id, proxy]), startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true, broadcastSearch: async (id, query) => { searches.push([id, query]); return { status: 'matched', interactionStatus: 'opened', matchedUrl: 'https://example.test/a' }; }, startControlledKeepAlive() {} };
     const proxies = { cancelCurrentFetch() {}, fetchAssignDirect: async (ids, callback) => ids.forEach((id) => callback({ browserId: id, proxy: { host: '127.0.0.1', port: id } })) };
     const automation = new SeoAutomationManager(proxies, browser, async () => [1, 2, 3]);
     await automation.start({ query: ' first, second ', targetWebsite: 'example.test', intervalSec: 30, browserCount: 3, maxPages: 20 }); await tick();
-    assert.deepEqual(searches.map((entry) => entry[1]), ['first', 'first', 'first']);
+    assert.deepEqual(searches, [[1, 'first'], [2, 'second'], [3, 'first']]);
     await automation.runNow(); await tick();
-    assert.deepEqual(searches.slice(3).map((entry) => entry[1]), ['second', 'second', 'second']);
+    assert.deepEqual(searches.slice(3), [[1, 'first'], [2, 'second'], [3, 'first']]);
     automation.stop(); assert.equal(automation.getState().running, false); assert.equal(automation.timer, null);
     assert.equal(assignments.filter(([, proxy]) => proxy).length, 6);
     assert.equal(enabled.filter(([, value]) => value).length, 0);
+});
+test('starting rejects a keyword list larger than the selected browser fleet', async () => {
+    const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
+    const automation = new SeoAutomationManager({ cancelCurrentFetch() {} }, {}, async () => [1]);
+    await assert.rejects(
+        automation.start({ query: 'first, second', targetWebsite: 'example.test', browserCount: 1, maxPages: 20 }),
+        /Select at least 2 browsers/
+    );
+    assert.equal(automation.getState().running, false);
 });
 test('direct proxy API deduplication keeps ordering and leaves surplus browsers unassigned', async () => {
     const { ProxyManager } = loadTree(root, {}, { fetch: async () => ({ ok: true, text: async () => 'http://127.0.0.1:8080\nsocks5://127.0.0.1:8080\nsocks5://127.0.0.2:1080' }) })('main/ProxyManager.js');
@@ -196,12 +205,16 @@ test('preload coalesces scroll geometry per frame and preserves all Promise sett
     assert.equal(calls.length, 0); frame(); await Promise.all([first, second, third]);
     assert.equal(calls.length, 2); assert.equal(calls[0][2].x, 2);
 });
-test('renderer and its UI controls remain byte-for-byte identical to the reference', () => {
+test('renderer changes only the concurrent-keyword guidance', () => {
     const manifest = require('../docs/recovery-manifest.json');
-    for (const [file, hash] of Object.entries(manifest.files).filter(([file]) => file.startsWith('dist/renderer/'))) {
+    for (const [file, hash] of Object.entries(manifest.files).filter(([file]) => file.startsWith('dist/renderer/') && !file.endsWith('.js'))) {
         const actual = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, file.replace(/^dist\//, '')))).digest('hex');
         assert.equal(actual, hash, file);
     }
+    const renderer = fs.readFileSync(path.join(root, 'renderer/assets/index-BZgi7Ish.js'), 'utf8');
+    assert.match(renderer, /Keywords \(comma separated, simultaneous\)/);
+    assert.match(renderer, /keywords run at the same time across the selected browsers/);
+    assert.doesNotMatch(renderer, /keywords rotate one per cycle/);
 });
 test('renderer Keep Alive cancellation releases its sleep and prevents a late link click', async () => {
     const { buildKeepAliveActionScript } = loadTree(root, fakeElectron())('main/BrowserManager.js');
