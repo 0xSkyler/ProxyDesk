@@ -73,6 +73,7 @@ async function launch() {
     const csv = fs.readFileSync(path.join(profile, 'export.csv'), 'utf8');
     for (const keyword of ['alpha research', 'beta research', 'gamma research']) assert.ok(csv.includes(`,"${keyword}",`));
     report.checks.keywordFilterHistoryAndCsv = true;
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: path.join(output, 'parallel-keywords.png'), fullPage: true });
     await page.getByRole('button', { name: 'Control Center', exact: true }).click();
     await page.getByRole('button', { name: 'Stop Keep Alive', exact: true }).click();

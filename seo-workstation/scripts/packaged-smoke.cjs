@@ -5,7 +5,7 @@ const path = require('node:path');
 const { _electron } = require('playwright');
 const executablePath = process.argv[2];
 if (!executablePath) throw new Error('Usage: node scripts/packaged-smoke.cjs <packaged executable>');
-const report = { version: require('../package.json').version, platform: process.platform, checks: {} };
+const report = { version: require('../package.json').version, platform: process.platform, executablePath: path.resolve(executablePath), checks: {} };
 let application;
 (async () => {
   try {
@@ -23,8 +23,8 @@ let application;
     report.checks.productionUiAndBundledBinaries = true;
     report.engines = await application.evaluate(async ({ app }) => {
       if (!app.isPackaged || !app.getAppPath().endsWith('app.asar')) throw new Error('Smoke must exercise the packaged ASAR.');
-      const path = require('node:path');
-      const runtime = require(path.join(app.getAppPath(), 'dist/main/browser/PlaywrightRuntime.js')).getPlaywright();
+      const runtimeRequire = process.getBuiltinModule('module').createRequire(`${app.getAppPath()}/package.json`);
+      const runtime = runtimeRequire('./dist/main/browser/PlaywrightRuntime.js').getPlaywright();
       const results = [];
       for (const engine of ['chromium', 'firefox', 'webkit']) {
         const browser = await runtime[engine].launch({ headless: true });

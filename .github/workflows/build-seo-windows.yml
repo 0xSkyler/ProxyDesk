@@ -36,6 +36,18 @@ jobs:
         run: npm run package:win
       - name: Verify packaged UI and Chromium, Firefox, WebKit
         run: node scripts/packaged-smoke.cjs 'release/win-unpacked/ProxyDesk SEO.exe'
+      - name: Install candidate and verify installed application
+        shell: pwsh
+        run: |
+          Copy-Item test-results/packaged-smoke.json test-results/unpacked-smoke.json
+          $installer = (Get-ChildItem release/ProxyDesk-SEO-Setup-*.exe | Select-Object -First 1).FullName
+          $destination = Join-Path $env:RUNNER_TEMP 'ProxyDesk-SEO-Installed'
+          $process = Start-Process -FilePath $installer -ArgumentList '/S',"/D=$destination" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+          $executable = Join-Path $destination 'ProxyDesk SEO.exe'
+          if (-not (Test-Path $executable)) { throw 'Installed executable is missing' }
+          node scripts/packaged-smoke.cjs "$executable"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Create source archive and checksums
         shell: pwsh
         run: |
