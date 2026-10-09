@@ -137,9 +137,16 @@ async function launch() {
     console.log(JSON.stringify(report, null, 2));
   } catch (error) {
     report.error = error.stack;
+    if (application) report.inputDiagnostics = await application.evaluate(async () => {
+      const manager = global.__seoFixture.manager;
+      return {
+        inputs: global.__seoFixture.inputs,
+        browser: manager?.require(1).page ? await manager.require(1).page.evaluate(() => ({ value: document.querySelector('#field')?.value, active: document.activeElement?.id, scrollY: window.scrollY })) : null
+      };
+    }).catch(() => null);
     if (page) report.failureState = await page.evaluate(async () => ({ state: await window.proxydesk.bootstrap(), history: await window.proxydesk.seo.history() })).catch(() => null);
     if (page) await page.screenshot({ path: path.join(output, 'desktop-failure.png'), fullPage: true }).catch(() => {});
-    console.error(report.error); process.exitCode = 1;
+    console.error(report.error); console.error(JSON.stringify({ inputDiagnostics: report.inputDiagnostics, checks: report.checks })); process.exitCode = 1;
   } finally {
     if (application) {
       await page.evaluate(() => window.proxydesk.workspace.stopAll()).catch(() => {});

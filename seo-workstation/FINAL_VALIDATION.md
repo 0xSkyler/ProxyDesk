@@ -3,7 +3,7 @@
 Local Linux checks on 2026-10-09:
 
 - Strict TypeScript checks and production build: passed.
-- Vitest: 51 passed, including shared-fleet keyword allocation, concurrent starts, cleanup barrier, challenges, overlapping-run rejection, Stop All cancellation, history and per-keyword CSV.
+- Vitest: 53 passed, including shared-fleet keyword allocation, concurrent starts, cleanup barrier, challenges, overlapping-run rejection, Stop All cancellation, history and per-keyword CSV.
 - Deterministic original smoke suite: passed before feature work; rerun by the verification gate.
 - Real Electron desktop fixture: passed with three Chromium workspaces and three simultaneous keywords. Verified distinct proxy assignments, matched article opening, Keep Alive, tab-switch continuity, filtering, legacy/new history, CSV, live-view mouse/keyboard input and continuing frames, context closure and reopening with an empty proxy pool.
 - ESLint: zero errors; four existing hook dependency warnings outside the modified SEO page.

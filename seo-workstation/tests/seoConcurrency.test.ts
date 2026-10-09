@@ -172,3 +172,37 @@ describe('workspace SEO runs', () => {
     expect(restored[1]?.results).toHaveLength(3);
   });
 });
+
+describe('interactive browser input ordering', () => {
+  it('applies the click before fast typing while a different browser remains responsive', async () => {
+    const { manager } = setup(2);
+    const gate = deferred();
+    let focused = false, firstText = '', secondText = '';
+    const first = fakePage('https://example.test/article');
+    first.mouse = { move: async () => gate.promise, down: async () => { focused = true; } } as PwPage['mouse'];
+    first.keyboard = { insertText: async (text: string) => { if (focused) firstText += text; } } as PwPage['keyboard'];
+    const second = fakePage('https://example.test/article');
+    second.keyboard = { insertText: async (text: string) => { secondText += text; } } as PwPage['keyboard'];
+    (manager as any).require(1).page = first;
+    (manager as any).require(2).page = second;
+    const click = manager.sendInput(1, { kind: 'pointer', action: 'down', x: 20, y: 20 });
+    const typing = manager.sendInput(1, { kind: 'text', text: 'fast typing' });
+    await manager.sendInput(2, { kind: 'text', text: 'independent' });
+    expect(secondText).toBe('independent');
+    gate.resolve(); await Promise.all([click, typing]);
+    expect(firstText).toBe('fast typing');
+  });
+  it('releases the input queue after an error', async () => {
+    const { manager } = setup(1);
+    let text = '';
+    const page = fakePage('https://example.test/article');
+    page.mouse = { move: async () => { throw new Error('Fixture input failed'); } } as PwPage['mouse'];
+    page.keyboard = { insertText: async (value: string) => { text += value; } } as PwPage['keyboard'];
+    (manager as any).require(1).page = page;
+    const first = manager.sendInput(1, { kind: 'pointer', action: 'down', x: 20, y: 20 });
+    const second = manager.sendInput(1, { kind: 'text', text: 'still usable' });
+    const outcomes = await Promise.allSettled([first, second]);
+    expect(outcomes.map((result) => result.status)).toEqual(['rejected', 'fulfilled']);
+    expect(text).toBe('still usable');
+  });
+});

@@ -46,6 +46,9 @@ for (const engine of ['chromium', 'firefox', 'webkit']) {
   };
 }
 const { WorkspaceManager } = require(path.join(root, 'dist/main/WorkspaceManager.js'));
+fixture.inputs = [];
+const input = WorkspaceManager.prototype.sendInput;
+WorkspaceManager.prototype.sendInput = function (id, event) { fixture.inputs.push({ id, ...event }); return input.call(this, id, event); };
 const run = WorkspaceManager.prototype.runSeoTracking;
 WorkspaceManager.prototype.runSeoTracking = function (request) { fixture.manager = this; return run.call(this, request); };
 require(path.join(root, 'dist/main/main.js'));

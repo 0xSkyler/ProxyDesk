@@ -35,6 +35,7 @@ interface WorkspaceRuntime {
   recovering: boolean;
   lastRecoveryAt: number;
   generation: number;
+  inputQueue?: Promise<void>;
 }
 
 const DEFAULT_TARGET = 'https://www.google.com/';
@@ -608,6 +609,7 @@ export class WorkspaceManager extends EventEmitter {
     runtime.context = undefined;
     runtime.browser = undefined;
     runtime.page = undefined;
+    runtime.inputQueue = undefined;
 
     if (context) {
       await withTimeout(context.close(), CLOSE_TIMEOUT_MS, `Browser ${id} context close`).catch((error) => {
@@ -819,9 +821,19 @@ export class WorkspaceManager extends EventEmitter {
       await page.keyboard.press(key);
     };
 
+    // Pointer and keyboard IPC calls arrive independently. Keep their order
+    // within this workspace so typing cannot overtake the click that focuses
+    // its field, while other browsers continue accepting input independently.
+    let expired = false;
+    const pending = (runtime.inputQueue ?? Promise.resolve()).catch(() => undefined).then(async () => {
+      if (expired || runtime.page !== page || page.isClosed()) throw new Error('Browser changed before input could be applied.');
+      await operation();
+    });
+    runtime.inputQueue = pending.then(() => undefined, () => undefined);
     try {
-      await withTimeout(operation(), INPUT_TIMEOUT_MS, `Browser ${id} input`);
+      await withTimeout(pending, INPUT_TIMEOUT_MS, `Browser ${id} input`);
     } catch (error) {
+      expired = true;
       const message = error instanceof Error ? error.message : String(error);
       if (/timed out|closed|disconnected|crash/i.test(message)) {
         void this.recoverWorkspace(id, 'Interactive browser input stopped responding');
