@@ -1,0 +1,62 @@
+name: Build ProxyDesk SEO multi-keyword Windows
+
+on:
+  push:
+    branches: [main, codex/seo-parallel-keywords]
+    paths: ['seo-workstation/**', '.github/workflows/build-seo-windows.yml']
+  pull_request:
+    branches: [main]
+    paths: ['seo-workstation/**', '.github/workflows/build-seo-windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: seo-workstation
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: '0'
+      PROXYDESK_TEST_MIXED: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: seo-workstation/package-lock.json
+      - name: Install locked dependencies and bundled browsers
+        run: npm ci --no-audit --no-fund
+      - name: Verify real desktop workflow and build installer
+        run: npm run package:win
+      - name: Verify packaged UI and Chromium, Firefox, WebKit
+        run: node scripts/packaged-smoke.cjs 'release/win-unpacked/ProxyDesk SEO.exe'
+      - name: Create source archive and checksums
+        shell: pwsh
+        run: |
+          git archive --format=zip --prefix=ProxyDesk-SEO-4.1.0/ --output=release/ProxyDesk-SEO-4.1.0-SOURCE.zip HEAD:seo-workstation
+          Get-ChildItem release/*.exe,release/*SOURCE.zip | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($hash.Hash.ToLower())  $($_.Name)"
+          } | Set-Content release/SHA256SUMS.txt
+      - name: Upload Windows installer and source
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProxyDesk-SEO-4.1.0-Windows
+          path: |
+            seo-workstation/release/*.exe
+            seo-workstation/release/*SOURCE.zip
+            seo-workstation/release/SHA256SUMS.txt
+          if-no-files-found: error
+      - name: Upload desktop and packaged test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProxyDesk-SEO-4.1.0-test-evidence
+          path: seo-workstation/test-results/
+          if-no-files-found: warn

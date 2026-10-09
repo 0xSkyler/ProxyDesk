@@ -152,3 +152,7 @@ purge, scheduled task restart, browser pooling or concurrency reduction is added
 The shipped reference has no persistent settings / Save Settings control.
 This optimization preserves its defaults and React input behavior; it does not
 add a new settings workflow.
+
+## Supplied ProxyDesk SEO 4.x workstation
+
+The user-supplied TypeScript/React workstation with simultaneous multi-keyword tracking is in [`seo-workstation/`](seo-workstation/README.md). Its Windows build is separate from this v0.5.4 Linux application. Run its commands from that folder.

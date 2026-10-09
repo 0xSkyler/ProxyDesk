@@ -1,0 +1,53 @@
+{
+  "name": "proxydesk-seo",
+  "version": "4.1.0",
+  "description": "ProxyDesk SEO with simultaneous keyword groups and a shared browser fleet",
+  "main": "dist/main/main.js",
+  "author": "ProxyDesk",
+  "license": "MIT",
+  "scripts": {
+    "clean": "rimraf dist release",
+    "postinstall": "npm run browsers:install",
+    "browsers:install": "cross-env PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium firefox webkit",
+    "dev": "npm run build:main && concurrently -k \"tsc -p tsconfig.main.json --watch --preserveWatchOutput\" \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "start": "electron .",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "build": "npm run clean && npm run build:main && npm run build:renderer",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "lint": "eslint src tests",
+    "test": "vitest run",
+    "package": "npm run build && electron-builder",
+    "package:win": "npm run verify && electron-builder --win nsis",
+    "verify": "npm run typecheck && npm run smoke && npm run runtime-smoke && npm run lint && npm test && npm run test:desktop",
+    "smoke": "npm run build:main && node scripts/final-smoke.cjs",
+    "runtime-smoke": "node scripts/runtime-browser-smoke.cjs",
+    "test:desktop": "npm run build && node scripts/desktop-smoke.cjs"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.3",
+    "playwright": "1.63.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "electron": "44.4.1",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.35.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.42.0",
+    "vite": "^7.1.5",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.4"
+  }
+}
