@@ -38,13 +38,13 @@ for (const [file, exported, field] of [['BrowserManager.js', 'BrowserManager', '
 }
 // Fixture substitutes only external search discovery. Production search, click,
 // challenge and selector code is never modified by this harness.
-if (process.env.PROXYDESK_FIXTURE_API) {
+if (process.env.DOM_FIXTURE_API) {
     const nativeFetch = global.fetch;
-    global.fetch = (url, options) => nativeFetch(url === 'http://169.58.35.69/data/all-working.txt' ? process.env.PROXYDESK_FIXTURE_API : url, options);
+    global.fetch = (url, options) => nativeFetch(url === 'http://169.58.35.69/data/all-working.txt' ? process.env.DOM_FIXTURE_API : url, options);
     const module = require(path.join(mainDir, 'BrowserManager.js'));
     module.BrowserManager.prototype.broadcastSearch = async function (id, query) {
         probe.searches.push({ browserId: id, query });
-        const url = `${process.env.PROXYDESK_FIXTURE_SITE}/article/${encodeURIComponent(query)}`;
+        const url = `${process.env.DOM_FIXTURE_SITE}/article/${encodeURIComponent(query)}`;
         await this.get(id).view.webContents.loadURL(url);
         return { browserId: id, status: 'matched', interactionStatus: 'opened', matchedUrl: url, ranAt: new Date().toISOString() };
     };

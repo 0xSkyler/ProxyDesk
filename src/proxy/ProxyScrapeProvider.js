@@ -37,7 +37,7 @@ async function fetchProxyScrapeFreeList(options = {}) {
         const request = node_https_1.default.get(url, {
             headers: {
                 accept: 'text/plain,*/*;q=0.8',
-                'user-agent': 'ProxyDesk-SEO-Lite/1.0'
+                'user-agent': 'DOM-SEO-Lite/1.0'
             }
         }, (response) => {
             const statusCode = response.statusCode ?? 0;

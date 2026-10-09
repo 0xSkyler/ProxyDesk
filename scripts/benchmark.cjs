@@ -15,7 +15,7 @@ const runtime = path.resolve(runtimeArg), source = path.resolve(sourceArg), outp
 const activeMs = Number(durationArg) * 1000, count = Number(countArg);
 assert.ok(Number.isFinite(activeMs) && activeMs >= 1000 && activeMs <= 24 * 3600 * 1000 && Number.isInteger(count) && count >= 1 && count <= 100);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'proxydesk-benchmark-'));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'dom-benchmark-'));
 const servers = []; let application, exitObserved = false;
 const report = { schema: 2, platform: os.platform(), release: os.release(), arch: os.arch(), cpus: os.cpus().length, electron: require('../package.json').devDependencies.electron, testedBrowserCount: count, activeSeconds: activeMs / 1000, rendering: 'software/Xvfb', sandboxDisabled: true, scenario: 'local HTTP proxy fixtures; external search discovery substituted, original scroll/link/cycle code', samples: [], checks: {} };
 async function server(handler) {
@@ -24,7 +24,7 @@ async function server(handler) {
 }
 function fixture(req, res) {
     res.setHeader('Content-Type', 'text/html');
-    res.end(`<html><head><link rel="icon" href="data:,"></head><body><article><h1>Local article fixture</h1>${Array.from({ length: 80 }, (_, i) => `<p>Local scrolling content ${i} for ProxyDesk rendering verification.</p>`).join('')}${Array.from({ length: 100 }, (_, i) => `<a href="http://fixture.local/article/${i}">Read local article number ${i}</a><br>`).join('')}</article></body></html>`);
+    res.end(`<html><head><link rel="icon" href="data:,"></head><body><article><h1>Local article fixture</h1>${Array.from({ length: 80 }, (_, i) => `<p>Local scrolling content ${i} for DOM rendering verification.</p>`).join('')}${Array.from({ length: 100 }, (_, i) => `<a href="http://fixture.local/article/${i}">Read local article number ${i}</a><br>`).join('')}</article></body></html>`);
 }
 async function snapshot(stage, page) {
     const sample = await withinDeadline(application.evaluate(() => global.__probe.snapshot()), 15_000, 'Main-process snapshot');
@@ -63,12 +63,12 @@ function processStart(pid) {
         await fsp.writeFile(path.join(appTree, 'package.json'), JSON.stringify(metadata));
         await fsp.copyFile(path.join(__dirname, 'probe-entry.cjs'), path.join(appTree, 'probe-entry.cjs'));
         await asar.createPackage(appTree, path.join(resources, 'app.asar'));
-        const executable = path.join(temporary, 'proxydesk');
+        const executable = path.join(temporary, 'dom');
         const launchStart = performance.now();
-        application = await _electron.launch({ executablePath: executable, args: ['--no-sandbox', '--disable-gpu', '--host-resolver-rules=MAP fixture.local 127.0.0.1', `--user-data-dir=${temporary}/profile`], env: { ...process.env, NODE_ENV: 'production', PROXYDESK_FIXTURE_API: `http://127.0.0.1:${fixturePort}/proxies`, PROXYDESK_FIXTURE_SITE: 'http://fixture.local' }, timeout: 60000 });
+        application = await _electron.launch({ executablePath: executable, args: ['--no-sandbox', '--disable-gpu', '--host-resolver-rules=MAP fixture.local 127.0.0.1', `--user-data-dir=${temporary}/profile`], env: { ...process.env, NODE_ENV: 'production', DOM_FIXTURE_API: `http://127.0.0.1:${fixturePort}/proxies`, DOM_FIXTURE_SITE: 'http://fixture.local' }, timeout: 60000 });
         application.process().once('exit', () => { exitObserved = true; });
         const page = await application.firstWindow();
-        await page.getByRole('heading', { name: 'ProxyDesk SEO Tracker Lite', exact: true }).waitFor();
+        await page.getByRole('heading', { name: `${metadata.productName} SEO Tracker Lite`, exact: true }).waitFor();
         await page.waitForFunction(() => document.querySelectorAll('.browser-card').length === 10);
         report.startupMs = performance.now() - launchStart; report.checks.rendererLoaded = true;
         const defaults = await page.locator('.tracker-controls input').evaluateAll((inputs) => inputs.map((input) => input.value));

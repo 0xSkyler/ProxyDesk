@@ -425,7 +425,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     result: {
                         ...result,
                         interactionStatus: 'click-failed',
-                        error: 'Target was detected, but the result could not be opened. ProxyDesk will retry in this session.'
+                        error: 'Target was detected, but the result could not be opened. DOM will retry in this session.'
                     }
                 });
                 await cancellableDelay(3_000, signal);

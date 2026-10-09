@@ -812,7 +812,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                                 resultPage: pageIndex + 1,
                                 monitoring: true,
                                 interactionStatus: 'click-failed',
-                                error: 'Target website and keyword are visibly present on this Google page, but the clickable result anchor could not be resolved. ProxyDesk will retry this page instead of paginating.',
+                                error: 'Target website and keyword are visibly present on this Google page, but the clickable result anchor could not be resolved. DOM will retry this page instead of paginating.',
                                 keepAliveStarted: false,
                                 ranAt
                             };
@@ -849,7 +849,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                     resultPage: pageIndex + 1,
                     monitoring: true,
                     interactionStatus: 'click-failed',
-                    error: 'Visible target text locked this Google page, but no clickable result was resolved before the observation timeout. ProxyDesk will retry this page.',
+                    error: 'Visible target text locked this Google page, but no clickable result was resolved before the observation timeout. DOM will retry this page.',
                     keepAliveStarted: false,
                     ranAt
                 };
@@ -1097,7 +1097,7 @@ class BrowserManager extends node_events_1.EventEmitter {
     cancelKeepAliveAction(managed) {
         const wc = managed.view.webContents;
         if (!wc.isDestroyed()) {
-            void wc.executeJavaScript('window.__proxyDeskKeepAliveController?.abort()', true).catch(() => undefined);
+            void wc.executeJavaScript('window.__domKeepAliveController?.abort()', true).catch(() => undefined);
         }
     }
     configureKeepAlive(intervalMs, maxHops, followLinks) {
@@ -1346,9 +1346,9 @@ class BrowserManager extends node_events_1.EventEmitter {
 exports.BrowserManager = BrowserManager;
 function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     return `(async () => {
-    window.__proxyDeskKeepAliveController?.abort();
+    window.__domKeepAliveController?.abort();
     const controller = new AbortController();
-    window.__proxyDeskKeepAliveController = controller;
+    window.__domKeepAliveController = controller;
     const signal = controller.signal;
     try {
     const visited = new Set(${JSON.stringify(visitedUrls)});
@@ -1496,7 +1496,7 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
       return {};
     }
     } finally {
-      if (window.__proxyDeskKeepAliveController === controller) delete window.__proxyDeskKeepAliveController;
+      if (window.__domKeepAliveController === controller) delete window.__domKeepAliveController;
     }
   })()`;
 }
@@ -1518,7 +1518,7 @@ function buildInstallGoogleLiveTargetObserverScript(targetHost, query = '') {
       var target = ${JSON.stringify(targetHost.toLowerCase())};
       var queryText = ${JSON.stringify(query.toLowerCase())};
       var key = target + '|' + queryText;
-      var previous = window.__proxyDeskGoogleWatcher;
+      var previous = window.__domGoogleWatcher;
       if (previous && previous.key === key && previous.state) {
         return Object.assign({}, previous.state);
       }
@@ -1943,7 +1943,7 @@ function buildInstallGoogleLiveTargetObserverScript(targetHost, query = '') {
         if (!state.match) scan();
       }, 120);
 
-      window.__proxyDeskGoogleWatcher = {
+      window.__domGoogleWatcher = {
         key: key,
         state: state,
         click: function() {
@@ -1987,7 +1987,7 @@ function buildInstallGoogleLiveTargetObserverScript(targetHost, query = '') {
 function buildReadGoogleLiveTargetObserverScript() {
     return `(function() {
     try {
-      var watcher = window.__proxyDeskGoogleWatcher;
+      var watcher = window.__domGoogleWatcher;
       if (!watcher || !watcher.state) return null;
       return Object.assign({}, watcher.state);
     } catch (_) {
@@ -1998,7 +1998,7 @@ function buildReadGoogleLiveTargetObserverScript() {
 function buildClickGoogleLiveTargetObserverScript() {
     return `(function() {
     try {
-      var watcher = window.__proxyDeskGoogleWatcher;
+      var watcher = window.__domGoogleWatcher;
       return Boolean(watcher && watcher.click && watcher.click());
     } catch (_) {
       return false;
@@ -2008,9 +2008,9 @@ function buildClickGoogleLiveTargetObserverScript() {
 function buildStopGoogleLiveTargetObserverScript() {
     return `(function() {
     try {
-      var watcher = window.__proxyDeskGoogleWatcher;
+      var watcher = window.__domGoogleWatcher;
       if (watcher && watcher.stop) watcher.stop();
-      delete window.__proxyDeskGoogleWatcher;
+      delete window.__domGoogleWatcher;
       return true;
     } catch (_) {
       return false;

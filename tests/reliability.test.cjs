@@ -205,25 +205,29 @@ test('preload coalesces scroll geometry per frame and preserves all Promise sett
     assert.equal(calls.length, 0); frame(); await Promise.all([first, second, third]);
     assert.equal(calls.length, 2); assert.equal(calls[0][2].x, 2);
 });
-test('renderer changes only the concurrent-keyword guidance', () => {
+test('renderer carries the DOM brand and concurrent-keyword guidance', () => {
     const manifest = require('../docs/recovery-manifest.json');
-    for (const [file, hash] of Object.entries(manifest.files).filter(([file]) => file.startsWith('dist/renderer/') && !file.endsWith('.js'))) {
+    for (const [file, hash] of Object.entries(manifest.files).filter(([file]) => file.startsWith('dist/renderer/') && file.endsWith('.css'))) {
         const actual = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, file.replace(/^dist\//, '')))).digest('hex');
         assert.equal(actual, hash, file);
     }
+    const html = fs.readFileSync(path.join(root, 'renderer/index.html'), 'utf8');
     const renderer = fs.readFileSync(path.join(root, 'renderer/assets/index-BZgi7Ish.js'), 'utf8');
+    assert.match(html, /<title>DOM<\/title>/);
+    assert.match(renderer, /DOM SEO Tracker Lite/);
     assert.match(renderer, /Keywords \(comma separated, simultaneous\)/);
     assert.match(renderer, /keywords run at the same time across the selected browsers/);
     assert.doesNotMatch(renderer, /keywords rotate one per cycle/);
+    assert.doesNotMatch(html + renderer, new RegExp(['Proxy', 'Desk'].join(''), 'i'));
 });
 test('renderer Keep Alive cancellation releases its sleep and prevents a late link click', async () => {
     const { buildKeepAliveActionScript } = loadTree(root, fakeElectron())('main/BrowserManager.js');
     const timers = new Set(); const window = { innerHeight: 1000, scrollBy() {} };
     const context = require('node:vm').createContext({ window, document: { scrollingElement: { scrollHeight: 10 }, documentElement: { scrollHeight: 10 }, body: { scrollHeight: 10 } }, AbortController, URL, setTimeout: (fn) => { timers.add(fn); return fn; }, clearTimeout: (fn) => timers.delete(fn), performance: { now: () => 0 } });
     const work = require('node:vm').runInContext(buildKeepAliveActionScript(true), context);
-    assert.equal(timers.size, 1); window.__proxyDeskKeepAliveController.abort();
+    assert.equal(timers.size, 1); window.__domKeepAliveController.abort();
     await assert.rejects(work, /cancelled/); assert.equal(timers.size, 0);
-    assert.equal(window.__proxyDeskKeepAliveController, undefined);
+    assert.equal(window.__domKeepAliveController, undefined);
 });
 test('overlapping proxy changes settle in request order without blocking other browsers', async () => {
     const { manager } = await managerFixture();

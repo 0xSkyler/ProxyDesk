@@ -1,4 +1,4 @@
-# ProxyDesk v0.5.4 for Linux
+# DOM v0.5.5 for Linux
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -37,14 +37,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x ProxyDesk-v0.5.4-linux-x86_64.AppImage
-./ProxyDesk-v0.5.4-linux-x86_64.AppImage
+chmod +x DOM-v0.5.5-linux-x86_64.AppImage
+./DOM-v0.5.5-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./ProxyDesk-v0.5.4-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.5-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -59,7 +59,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-PROXYDESK_SOFTWARE_RENDERING=1 ./ProxyDesk-v0.5.4-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.5-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -75,11 +75,11 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.4-linux.2/deploy/install-ubuntu.sh -o /tmp/proxydesk-install.sh && bash /tmp/proxydesk-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.5-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
-root-owned `/opt/proxydesk`, configures its sandbox helper and Ubuntu AppArmor
+root-owned `/opt/dom`, configures its sandbox helper and Ubuntu AppArmor
 namespace permission, then launches a systemd user service. The service owns the
 whole process group, allows 15 seconds for shutdown and restarts failed launches.
 Desktop login starts the service; closing its window normally stops it. It does
@@ -94,12 +94,12 @@ desktop session active. App restarts preserve the reference behavior: tasks do
 not restart automatically, and its input settings return to the original defaults.
 
 ```sh
-systemctl --user status proxydesk
-journalctl --user -u proxydesk -n 50 --no-pager
-systemctl --user stop proxydesk
+systemctl --user status dom
+journalctl --user -u dom -n 50 --no-pager
+systemctl --user stop dom
 ```
 
-Main-branch CI publishes the immutable `v0.5.4-linux.2` release only after native
+Main-branch CI publishes the immutable `v0.5.5-linux.1` release only after native
 build, packaged smoke tests and original/optimized fixture comparison succeed.
 The original Windows release is retained. The installer checks host prerequisites;
 the target VPS's display, sandbox configuration and live proxy/search behavior

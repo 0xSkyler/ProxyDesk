@@ -14,7 +14,7 @@ const browser_1 = require("../shared/types/browser");
 const automation_1 = require("../shared/types/automation");
 // Recovered renderer assets are available in both source and packaged runs.
 const isDev = process.env.NODE_ENV === 'development';
-if (process.platform === 'linux' && process.env.PROXYDESK_SOFTWARE_RENDERING === '1') {
+if (process.platform === 'linux' && process.env.DOM_SOFTWARE_RENDERING === '1') {
     electron_1.app.disableHardwareAcceleration();
 }
 let mainWindow = null;
@@ -34,7 +34,7 @@ async function createWindowShell() {
         minWidth: 1050,
         minHeight: 720,
         backgroundColor: '#0f1115',
-        title: 'ProxyDesk SEO Tracker Lite',
+        title: 'DOM SEO Tracker Lite',
         show: false,
         webPreferences: {
             preload: node_path_1.default.join(__dirname, '../preload/preload.js'),
@@ -117,7 +117,7 @@ async function bootstrap() {
     // Keep Alive is automatic after a matched Google result.
     browserManager.configureKeepAlive(60_000, 1, false);
     await loadRenderer();
-    Logger_1.logger.info('application', 'ProxyDesk SEO Tracker Lite ready.');
+    Logger_1.logger.info('application', 'DOM SEO Tracker Lite ready.');
 }
 electron_1.app.whenReady().then(() => {
     electron_1.session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
@@ -155,7 +155,7 @@ electron_1.app.on('before-quit', (event) => {
         await browserManager?.destroyAll();
         await Logger_1.logger.close();
     })().catch((err) => {
-        console.error('ProxyDesk shutdown failed:', err);
+        console.error('DOM shutdown failed:', err);
     }).finally(() => {
         clearTimeout(deadline);
         shutdownComplete = true;

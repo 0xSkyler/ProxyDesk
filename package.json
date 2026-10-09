@@ -1,9 +1,9 @@
 {
-  "name": "proxydesk",
-  "productName": "ProxyDesk",
-  "version": "0.5.4",
-  "description": "ProxyDesk v0.5.4, deterministic native Linux build",
-  "author": "ProxyDesk",
+  "name": "dom",
+  "productName": "DOM",
+  "version": "0.5.5",
+  "description": "DOM v0.5.5, simultaneous multi-keyword desktop application",
+  "author": "DOM",
   "license": "MIT",
   "private": true,
   "main": "src/main/main.js",
@@ -23,8 +23,8 @@
     "playwright-core": "1.62.1"
   },
   "build": {
-    "appId": "com.proxydesk.desktop",
-    "productName": "ProxyDesk",
+    "appId": "com.dom.desktop",
+    "productName": "DOM",
     "asar": true,
     "directories": {
       "output": "release-linux"
@@ -45,8 +45,8 @@
         "tar.gz"
       ],
       "category": "Utility",
-      "artifactName": "ProxyDesk-v${version}-linux-${arch}.${ext}"
+      "artifactName": "DOM-v${version}-linux-${arch}.${ext}"
     }
   },
-  "linuxRelease": "v0.5.4-linux.2"
+  "linuxRelease": "v0.5.5-linux.1"
 }
