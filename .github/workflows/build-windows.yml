@@ -31,7 +31,7 @@ jobs:
         shell: pwsh
         run: |
           $env:ELECTRON_RUN_AS_NODE = '1'
-          & node_modules/electron/dist/electron.exe --test tests/*.test.cjs
+          & node_modules/electron/dist/electron.exe --test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows installer from tracked source
         run: npm run package:windows
