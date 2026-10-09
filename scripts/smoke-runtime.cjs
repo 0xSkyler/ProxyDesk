@@ -8,9 +8,10 @@ const target = path.resolve(process.argv[2]);
 if (target.endsWith('.AppImage')) fs.chmodSync(target, 0o755);
 let app;
 const sandboxEnabled = process.env.DOM_TEST_SANDBOX === '1';
+const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandboxEnabled;
 (async () => {
     try {
-        app = await _electron.launch({ executablePath: target, chromiumSandbox: sandboxEnabled, args: [...(sandboxEnabled ? [] : ['--no-sandbox']), '--disable-gpu', `--user-data-dir=${profile}`], env: { ...process.env, NODE_ENV: 'production', APPIMAGE_EXTRACT_AND_RUN: '1' }, timeout: 60000 });
+        app = await _electron.launch({ executablePath: target, chromiumSandbox: !disableSandboxForLinuxTestRunner, args: [...(disableSandboxForLinuxTestRunner ? ['--no-sandbox'] : []), '--disable-gpu', `--user-data-dir=${profile}`], env: { ...process.env, NODE_ENV: 'production', APPIMAGE_EXTRACT_AND_RUN: '1' }, timeout: 60000 });
         if (sandboxEnabled) assert.equal(await app.evaluate(({ app }) => app.commandLine.hasSwitch('no-sandbox')), false);
         const page = await app.firstWindow();
         await page.getByRole('heading', { name: 'DOM SEO Tracker Lite', exact: true }).waitFor();

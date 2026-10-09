@@ -1,4 +1,4 @@
-# DOM v0.5.5 for Linux
+# DOM v0.5.5
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -17,6 +17,28 @@ challenge handling, result opening, Keep Alive, proxy fetching and controls are
 unchanged.
 
 ## Build and run
+
+### Windows download
+
+[Download DOM v0.5.5 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.5/DOM-v0.5.5-Windows-x64-Setup.exe)
+
+The Windows workflow builds this installer on a native GitHub Windows runner,
+installs it silently into a clean directory, opens both the unpacked and installed
+applications, verifies the DOM UI and input validation, and publishes a SHA-256
+checksum with the release. The installer is not Authenticode-signed, so Windows
+SmartScreen may ask for confirmation on first launch.
+
+Build locally on Windows with Node 20:
+
+```powershell
+npm ci
+npm test
+npm run package:windows
+```
+
+Output: `release-windows/DOM-v0.5.5-Windows-x64-Setup.exe`.
+
+### Linux build
 
 Ubuntu 24.04 x64, Node 20:
 

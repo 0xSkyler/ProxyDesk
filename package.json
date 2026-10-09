@@ -13,6 +13,7 @@
     "check": "node scripts/check-source.cjs",
     "recover": "node scripts/recover.cjs",
     "package:linux": "npm run check && electron-builder --linux AppImage tar.gz --x64 --publish never",
+    "package:windows": "npm run check && electron-builder --win nsis --x64 --publish never --config.directories.output=release-windows",
     "benchmark": "node scripts/benchmark.cjs"
   },
   "devDependencies": {
@@ -46,7 +47,23 @@
       ],
       "category": "Utility",
       "artifactName": "DOM-v${version}-linux-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "DOM-v${version}-Windows-${arch}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "runAfterFinish": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DOM"
     }
   },
-  "linuxRelease": "v0.5.5-linux.1"
+  "linuxRelease": "v0.5.5-linux.1",
+  "windowsRelease": "v0.5.5"
 }
