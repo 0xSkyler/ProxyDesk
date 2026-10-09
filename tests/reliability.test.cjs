@@ -261,7 +261,7 @@ test('main quit awaits owned cleanup and disposes handlers before final quit', a
     const testProcess = Object.assign(new EventEmitter(), { env: { NODE_ENV: 'production' }, platform: 'linux', pid: process.pid });
     loadTree(root, electron, { process: testProcess, setInterval: (fn) => { intervals.add(fn); return fn; }, clearInterval: (fn) => intervals.delete(fn) })('main/main.js');
     for (let i = 0; i < 50 && !windows[0]?.shown; i++) await tick();
-    assert.equal(windows[0].shown, true); assert.ok(windows[0].file.endsWith('renderer/index.html'));
+    assert.equal(windows[0].shown, true); assert.ok(windows[0].file.endsWith(path.join('renderer', 'index.html')));
     assert.equal(handlers.size, 8); assert.equal(electron.views.length, 10);
     const pending = deferred(); const activeSession = [...electron.sessions.entries()].find(([name]) => !name.startsWith('persist:'))[1];
     activeSession.clearStorageData = () => pending.promise;
