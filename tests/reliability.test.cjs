@@ -5,6 +5,7 @@ const { EventEmitter } = require('node:events');
 const path = require('node:path');
 const fs = require('node:fs');
 const { loadTree, fakeElectron } = require('./helpers.cjs');
+const { withTimeout } = require('../src/main/runtime');
 const root = path.resolve(__dirname, '../src');
 const tick = () => new Promise(setImmediate);
 const deferred = () => { let resolve; const promise = new Promise((r) => resolve = r); return { resolve, promise }; };
@@ -276,11 +277,12 @@ test('overlapping proxy changes settle in request order without blocking other b
 });
 test('main quit awaits owned cleanup and disposes handlers before final quit', async () => {
     const electron = fakeElectron(); const handlers = new Map(); const windows = []; const intervals = new Set();
+    const rendererShown = deferred();
     class BrowserWindow extends EventEmitter {
         constructor() { super(); Object.assign(this, electron.window); this.webContents = new EventEmitter(); this.webContents.isDestroyed = () => false; this.webContents.send = () => {}; windows.push(this); }
         async loadFile(file) { this.file = file; }
         async loadURL(url) { this.url = url; }
-        show() { this.shown = true; }
+        show() { this.shown = true; rendererShown.resolve(); }
         static getAllWindows() { return windows; }
     }
     electron.BrowserWindow = BrowserWindow;
@@ -292,7 +294,7 @@ test('main quit awaits owned cleanup and disposes handlers before final quit', a
     electron.app.exit = () => { throw new Error('Unexpected forced exit'); };
     const testProcess = Object.assign(new EventEmitter(), { env: { NODE_ENV: 'production' }, platform: 'linux', pid: process.pid });
     loadTree(root, electron, { process: testProcess, setInterval: (fn) => { intervals.add(fn); return fn; }, clearInterval: (fn) => intervals.delete(fn) })('main/main.js');
-    for (let i = 0; i < 50 && !windows[0]?.shown; i++) await tick();
+    await withTimeout(rendererShown.promise, 2_000, () => { throw new Error('Renderer was not shown after browser preparation.'); });
     assert.equal(windows[0].shown, true); assert.ok(windows[0].file.endsWith(path.join('renderer', 'index.html')));
     assert.equal(handlers.size, 9); assert.equal(electron.views.length, 10);
     const pending = deferred(); const activeSession = [...electron.sessions.entries()].find(([name]) => !name.startsWith('persist:'))[1];

@@ -16,6 +16,7 @@ let endpointInput = null;
 let replayingStart = false;
 let errorElement = null;
 let mountObserver = null;
+let preparationStatus = null;
 const browserStates = new Map();
 
 function showError(message) {
@@ -44,6 +45,15 @@ function updateSourceCopy(label) {
     const strong = status?.querySelector('strong');
     if (strong && strong.textContent !== label)
         strong.textContent = label;
+    if (preparationStatus && latestState) {
+        const preparing = Boolean(latestState.preparingBrowsers);
+        preparationStatus.hidden = !preparing;
+        const message = preparing
+            ? `Preparing browsers: ${latestState.preparedBrowsers || 0} / ${latestState.browserCount}. You can stop preparation at any time.`
+            : '';
+        if (preparationStatus.textContent !== message)
+            preparationStatus.textContent = message;
+    }
 }
 
 function applyState(state) {
@@ -141,6 +151,13 @@ async function mount() {
         createLabel('Proxy API URL (editable)', endpointInput, 'proxy-api-endpoint')
     );
     document.documentElement.dataset.domProviderControls = 'mounted';
+
+    preparationStatus = document.createElement('div');
+    preparationStatus.className = 'tracker-preparation';
+    preparationStatus.setAttribute('role', 'status');
+    preparationStatus.setAttribute('aria-live', 'polite');
+    preparationStatus.hidden = true;
+    document.querySelector('.tracker-status')?.after(preparationStatus);
 
     const state = await window.app.automation.getState();
     applyState(state);

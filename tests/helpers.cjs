@@ -20,6 +20,7 @@ function loadTree(root, electron, globals = {}) {
 function fakeElectron() {
     let nextId = 1;
     const app = new EventEmitter();
+    app.getPath = () => path.join(require('node:os').tmpdir(), 'dom-test-no-legacy-partitions');
     const views = [];
     const sessions = new Map();
     class WebContents extends EventEmitter {

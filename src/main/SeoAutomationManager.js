@@ -7,7 +7,7 @@ const browser_1 = require("../shared/types/browser");
 const seo_1 = require("../shared/seo");
 const ProxyManager_1 = require("./ProxyManager");
 const Logger_1 = require("./Logger");
-const { cancellableDelay } = require("./runtime");
+const { cancellableDelay, waitForPreparation } = require("./runtime");
 const DEFAULT_PROXY_SOURCE = (0, ProxyManager_1.resolveProxySource)();
 function createCycleController() {
     const controller = new AbortController();
@@ -37,6 +37,8 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
     state = {
         running: false,
         cycleInProgress: false,
+        preparingBrowsers: false,
+        preparedBrowsers: 0,
         proxySource: DEFAULT_PROXY_SOURCE.id,
         proxySourceLabel: DEFAULT_PROXY_SOURCE.label,
         proxyApiUrl: DEFAULT_PROXY_SOURCE.endpoint,
@@ -114,6 +116,8 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.state = {
             running: true,
             cycleInProgress: true,
+            preparingBrowsers: true,
+            preparedBrowsers: 0,
             proxySource: proxySource.id,
             proxySourceLabel: proxySource.label,
             proxyApiUrl: proxySource.endpoint,
@@ -130,19 +134,29 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             totalProxies: 0,
             liveProxies: 0,
             assignedBrowsers: 0,
-            nextCycleAt: new Date(Date.now() + intervalSec * 1000).toISOString()
+            nextCycleAt: undefined
         };
         this.emitState();
         let browserIds;
         try {
-            browserIds = await this.ensureBrowserCount(browserCount);
+            const signal = this.cycleController.signal;
+            browserIds = await waitForPreparation(this.ensureBrowserCount(browserCount, {
+                signal,
+                onProgress: (readyIds) => {
+                    if (!this.isCurrent(generation) || !this.state.preparingBrowsers) return;
+                    this.state = { ...this.state, preparedBrowsers: readyIds.length, browserIds: [...readyIds] };
+                    this.emitState();
+                }
+            }), 60_000, signal, 'Browser preparation timed out. Try fewer browsers or retry Start.');
         }
         catch (err) {
             if (!this.isCurrent(generation)) return this.getState();
+            this.cycleController.abort();
             this.state = {
                 ...this.state,
                 running: false,
                 cycleInProgress: false,
+                preparingBrowsers: false,
                 nextCycleAt: undefined,
                 lastError: `Browser preparation failed: ${err.message}`
             };
@@ -155,6 +169,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                 ...this.state,
                 running: false,
                 cycleInProgress: false,
+                preparingBrowsers: false,
                 nextCycleAt: undefined,
                 lastError: 'No browser workspaces are available.'
             };
@@ -164,7 +179,10 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.state = {
             ...this.state,
             cycleInProgress: false,
-            browserIds
+            preparingBrowsers: false,
+            preparedBrowsers: browserIds.length,
+            browserIds,
+            nextCycleAt: new Date(Date.now() + intervalSec * 1000).toISOString()
         };
         this.emitState();
         this.timer = setInterval(() => {
@@ -199,6 +217,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             ...this.state,
             running: false,
             cycleInProgress: false,
+            preparingBrowsers: false,
             nextCycleAt: undefined
         };
         this.emitState();

@@ -24,6 +24,11 @@ select:focus-visible {
   color: var(--danger);
 }
 
+.tracker-preparation {
+  margin: 10px 0;
+  color: var(--accent);
+}
+
 .tracker-controls {
   grid-template-columns: minmax(180px, 1.5fr) minmax(180px, 1.5fr) minmax(170px, 1.2fr) 100px 130px 150px;
 }

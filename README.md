@@ -1,10 +1,25 @@
-# DOM v0.5.6
+# DOM v0.5.7
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
 React renderer is a committed production bundle; original JSX/TS and source maps
 were not present in the installer. This is a deterministic recovered application
 tree, not a claim that the original development sources were recovered.
+
+## Browser startup
+
+Increasing the browser count now prepares new workspaces two at a time rather
+than starting every Chromium renderer and storage context together. The dashboard
+shows **Preparing browsers: 12 / 20**, and **Stop SEO Tracker** cancels preparation.
+Native initialization has a 15-second deadline per browser and a 60-second deadline
+for the whole preparation. A failed startup reports the cause and allows another
+Start instead of remaining at **Starting** indefinitely.
+
+Each new workspace starts with an empty memory partition. Recreated IDs reuse a
+partition only after its cleanup succeeds, keeping memory use bounded during
+normal resizing. DOM skips nonexistent legacy storage and bounds any migration
+cleanup. The two-worker limit applies only to preparation; all selected browsers
+still run their page monitoring, target clicks and Keep Alive concurrently.
 
 ## Simultaneous keywords
 
@@ -33,11 +48,12 @@ new portion of a stable provider list instead of reusing its first entries.
 
 ### Windows download
 
-[Download DOM v0.5.6 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.6/DOM-v0.5.6-Windows-x64-Setup.exe)
+[Download DOM v0.5.7 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.7/DOM-v0.5.7-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
-applications, verifies the DOM UI and input validation, and publishes a SHA-256
+applications, verifies growth from 10 to 20 browsers, shrink/regrowth, startup
+cancellation and recovery, the DOM UI and input validation, and publishes a SHA-256
 checksum with the release. The installer is not Authenticode-signed, so Windows
 SmartScreen may ask for confirmation on first launch.
 
@@ -49,7 +65,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.6-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.7-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -72,14 +88,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.6-linux-x86_64.AppImage
-./DOM-v0.5.6-linux-x86_64.AppImage
+chmod +x DOM-v0.5.7-linux-x86_64.AppImage
+./DOM-v0.5.7-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.6-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.7-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -94,12 +110,12 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.6-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.7-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
 site isolation, web security, sandboxing, or background throttling to chase a
-benchmark score. No Chromium concurrency limit or visit queue is introduced.
+benchmark score. Only new workspace preparation is batched; there is no visit queue.
 `NODE_ENV=development` explicitly selects the optional localhost:5173 dev server;
 ordinary source runs load the committed renderer assets directly.
 
@@ -110,7 +126,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.6-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.7-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -134,7 +150,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch CI publishes the immutable `v0.5.6-linux.1` release only after native
+Main-branch CI publishes the immutable `v0.5.7-linux.1` release only after native
 build, packaged smoke tests and original/optimized fixture comparison succeed.
 The original Windows release is retained. The installer checks host prerequisites;
 the target VPS's display, sandbox configuration and live proxy/search behavior

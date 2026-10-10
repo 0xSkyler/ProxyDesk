@@ -12,10 +12,12 @@ exports.buildGoogleResultScanScript = buildGoogleResultScanScript;
 exports.buildClickGoogleTargetResultScript = buildClickGoogleTargetResultScript;
 const node_events_1 = require("node:events");
 const electron_1 = require("electron");
+const { existsSync } = require('node:fs');
+const { join } = require('node:path');
 const constants_1 = require("../shared/constants");
 const seo_1 = require("../shared/seo");
 const Logger_1 = require("./Logger");
-const { withTimeout } = require("./runtime");
+const { withTimeout, waitForPreparation, preparationCancelled } = require("./runtime");
 /** Cap on automatic proxy swaps triggered by hitting Google's CAPTCHA page
  * in a row, before giving up and leaving it for a manual "Change Proxy"
  * click — without this, a proxy pool that's mostly Google-flagged (a real
@@ -69,6 +71,11 @@ class BrowserManager extends node_events_1.EventEmitter {
     disposing = new Map();
     disposed = false;
     loginHandler = null;
+    partitionSequence = 0;
+    reusablePartitions = new Map();
+    preparationTimeoutMs = 15_000;
+    legacyCleanupTimeoutMs = 2_000;
+    clearedLegacyPartitions = new Set();
     attachWindow(window) {
         this.window = window;
         this.installGlobalLoginHandler();
@@ -100,9 +107,22 @@ class BrowserManager extends node_events_1.EventEmitter {
         electron_1.app.on('login', this.loginHandler);
     }
     partitionFor(id, _persist) {
-        return buildEphemeralPartitionName(id);
+        const clean = this.reusablePartitions.get(id);
+        if (clean) {
+            this.reusablePartitions.delete(id);
+            return clean;
+        }
+        // Recreated IDs must not reuse a session whose delayed storage cleanup
+        // can still finish after a cancelled/failed preparation.
+        return `${buildEphemeralPartitionName(id)}-${++this.partitionSequence}`;
     }
     async clearLegacyPersistentPartition(id) {
+        if (this.clearedLegacyPartitions.has(id)) return;
+        this.clearedLegacyPartitions.add(id);
+        // Opening a nonexistent persistent partition creates another Chromium
+        // storage/network context. Most IDs (especially newly added browsers)
+        // have no legacy files at all, so avoid that expensive empty migration.
+        if (!existsSync(join(electron_1.app.getPath('sessionData'), 'Partitions', `browser-${id}`))) return;
         const legacy = electron_1.session.fromPartition(`${constants_1.PARTITION_PREFIX}${id}`, { cache: true });
         await Promise.allSettled([legacy.clearStorageData(), legacy.clearCache()]);
     }
@@ -119,19 +139,27 @@ class BrowserManager extends node_events_1.EventEmitter {
         try { await work; } finally { this.creating.delete(id); }
     }
     async createBrowserOwned(id, options) {
-        await this.disposing.get(id);
+        const { signal } = options;
+        if (signal?.aborted) throw preparationCancelled();
+        await waitForPreparation(this.disposing.get(id), this.preparationTimeoutMs, signal,
+            `Browser ${id} cleanup timed out. Stop and retry with fewer browsers.`);
+        if (this.disposed || signal?.aborted) throw preparationCancelled();
         if (this.browsers.has(id))
             return;
-        // Remove cookies/cache/local storage left by older persistent builds
-        // before creating this run's in-memory browser.
-        await this.clearLegacyPersistentPartition(id);
+        // Legacy cleanup is a bounded migration, never a prerequisite for
+        // isolation: the new browser uses a fresh in-memory-only partition.
+        try {
+            await waitForPreparation(this.clearLegacyPersistentPartition(id), this.legacyCleanupTimeoutMs, signal,
+                `Browser ${id} legacy storage cleanup timed out; using a fresh memory session.`);
+        } catch (error) {
+            if (signal?.aborted) throw error;
+            Logger_1.logger.warn('browser', error.message);
+        }
+        if (this.disposed || signal?.aborted) throw preparationCancelled();
         const partition = this.partitionFor(id, options.persistSessions);
         const ses = electron_1.session.fromPartition(partition, { cache: true });
-        // This partition has no "persist:" prefix, so it exists only in memory.
-        // Clear defensively as well: every process launch and every browser id
-        // begins with empty cookies/storage/cache.
-        await Promise.allSettled([ses.clearStorageData(), ses.clearCache()]);
-        if (this.disposed) return;
+        // A unique partition without "persist:" is already empty. Clearing it
+        // immediately would add two native storage waits to every new browser.
         if (options.userAgent)
             ses.setUserAgent(options.userAgent);
         const view = new electron_1.BrowserView({
@@ -161,6 +189,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         const managed = {
             id,
             view,
+            partition,
             session: ses,
             state,
             restartAttempts: 0,
@@ -179,12 +208,22 @@ class BrowserManager extends node_events_1.EventEmitter {
         };
         this.browsers.set(id, managed);
         this.wireEvents(managed, options);
-        this.window?.addBrowserView(view);
         const startUrl = normalizeUrl(options.startPage);
-        await view.webContents.loadURL(startUrl).catch((err) => {
-            Logger_1.logger.warn('browser', `Browser ${id} failed initial load: ${err.message}`);
-            this.updateState(managed, { connectionStatus: 'proxy-failed', errorMessage: err.message });
-        });
+        try {
+            this.window?.addBrowserView(view);
+            await waitForPreparation(view.webContents.loadURL(startUrl), this.preparationTimeoutMs, signal,
+                `Browser ${id} initialization timed out. Try fewer browsers or retry Start.`);
+            if (this.disposed || signal?.aborted) throw preparationCancelled();
+        } catch (error) {
+            // Close a partial renderer immediately. Waiting for its own creating
+            // promise via destroyBrowser here would deadlock.
+            managed.disposed = true;
+            if (this.browsers.get(id) === managed) this.browsers.delete(id);
+            if (this.window && !this.window.isDestroyed()) this.window.removeBrowserView(view);
+            if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false });
+            Logger_1.logger.warn('browser', `Browser ${id} failed initial load: ${error.message}`);
+            throw error;
+        }
     }
     wireEvents(managed, options) {
         const { view, id } = managed;
@@ -929,7 +968,7 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     async destroyBrowser(id) {
         if (this.disposing.has(id)) return this.disposing.get(id);
-        await this.creating.get(id);
+        await this.creating.get(id)?.catch(() => {});
         if (this.disposing.has(id)) return this.disposing.get(id);
         const managed = this.browsers.get(id);
         if (!managed)
@@ -950,7 +989,13 @@ class BrowserManager extends node_events_1.EventEmitter {
             managed.session.clearStorageData(),
             managed.session.clearCache(),
             managed.session.setProxy({ mode: 'direct' })
-        ]));
+        ])).then((results) => {
+            // Reuse only after successful cleanup. This keeps native storage
+            // context count bounded during normal shrink/regrowth while a failed
+            // cleanup can never clear data inside the next browsing session.
+            if (!this.disposed && results.every((result) => result.status === 'fulfilled'))
+                this.reusablePartitions.set(id, managed.partition);
+        });
         this.disposing.set(id, cleanup);
         try { await cleanup; } finally { this.disposing.delete(id); }
     }
