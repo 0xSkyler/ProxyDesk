@@ -8,14 +8,14 @@ const baselineProduct = require(path.resolve('.recovery/reference/package.json')
 const optimizedProduct = require('../package.json').productName;
 const functions = {
     buildEphemeralPartitionName: [5, 1234],
-    extractGoogleBlockContinueUrl: ['https://www.google.com/sorry/index?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3Dtest'],
-    buildInstallGoogleLiveTargetObserverScript: ['fixture.local', 'first keyword'],
-    buildReadGoogleLiveTargetObserverScript: [],
-    buildClickGoogleLiveTargetObserverScript: [],
-    buildStopGoogleLiveTargetObserverScript: [],
-    buildGoogleResultScanScript: ['fixture.local', 'first keyword'],
-    buildClickGoogleTargetResultScript: ['fixture.local', 'first keyword']
+    extractGoogleBlockContinueUrl: ['https://www.google.com/sorry/index?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3Dtest']
 };
+// v0.5.8 intentionally replaces Google recognition at the user's request.
+// Byte identity with v0.5.4 would reject that required behavior change. Google
+// matching now has real BrowserView fixtures in the build job that this paired
+// benchmark depends on. Session isolation and challenge URL parsing retain
+// their original contracts; scrolling, links and lifecycle are still exercised
+// in both builds by benchmark.cjs below this gate.
 function normalizeProductBrand(value, productName) {
     if (typeof value !== 'string') return value;
     const escapedName = productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -31,4 +31,4 @@ for (const [name, args] of Object.entries(functions)) {
         `Changed reference algorithm: ${name}`
     );
 }
-console.log(`Reference comparison passed: ${Object.keys(functions).length} original session/Google algorithms unchanged.`);
+console.log(`Reference comparison passed: ${Object.keys(functions).length} original session/challenge helpers unchanged. Updated Google recognition is validated by native BrowserView fixtures.`);
