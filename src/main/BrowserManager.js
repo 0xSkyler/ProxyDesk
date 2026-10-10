@@ -245,9 +245,16 @@ class BrowserManager extends node_events_1.EventEmitter {
         wc.on('ipc-message', (event, channel, payload) => {
             // Recognition runs in an isolated, sandboxed preload. Only accept
             // messages from this browser's current main frame and search cycle.
-            if (event.senderFrame !== wc.mainFrame) return;
+            if (managed.disposed || wc.isDestroyed()) return;
+            try {
+                if (!event.senderFrame || event.senderFrame !== wc.mainFrame) return;
+            } catch {
+                // A queued handshake can outlive its render frame on Stop.
+                return;
+            }
             if (channel === 'dom:google-preload-ready') {
-                event.reply('dom:google-config', managed.googleConfig || null);
+                try { event.reply('dom:google-config', managed.googleConfig || null); }
+                catch { /* Navigation or cancellation disposed the sender frame. */ }
                 return;
             }
             const config = managed.googleConfig;
@@ -546,10 +553,14 @@ class BrowserManager extends node_events_1.EventEmitter {
         }
     }
     stopGoogleRecognition(managed) {
+        const active = Boolean(managed.googleConfig);
         managed.googleConfig = null;
         managed.googleState = null;
         if (managed.state.googleSearchActivity) this.updateState(managed, { googleSearchActivity: undefined });
-        if (!managed.view.webContents.isDestroyed()) managed.view.webContents.send('dom:google-config', null);
+        if (active && !managed.view.webContents.isDestroyed()) {
+            try { managed.view.webContents.send('dom:google-config', null); }
+            catch { /* The renderer may have exited during cancellation. */ }
+        }
     }
     isMeasurementSessionCurrent(id, token) {
         return !this.disposed && this.browsers.has(id) && this.measurementTokens.get(id) === token;

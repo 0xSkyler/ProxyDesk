@@ -4,11 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { waitForAutomation, waitForRenderer } = require('./benchmark-state.cjs');
+const { withinDeadline, waitForAutomation, waitForRenderer } = require('./benchmark-state.cjs');
 const profile = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dom-smoke-'));
 const target = path.resolve(process.argv[2]);
 if (target.endsWith('.AppImage')) fs.chmodSync(target, 0o755);
 let app;
+let phase = 'launch', stderr = '';
 const servers = [];
 async function serve(handler) {
     const server = http.createServer(handler);
@@ -27,6 +28,7 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
 (async () => {
     try {
         app = await _electron.launch({ executablePath: target, chromiumSandbox: !disableSandboxForLinuxTestRunner, args: [...(disableSandboxForLinuxTestRunner ? ['--no-sandbox'] : []), '--disable-gpu', `--user-data-dir=${profile}`], env: { ...process.env, NODE_ENV: 'production', APPIMAGE_EXTRACT_AND_RUN: '1' }, timeout: 60000 });
+        app.process().stderr?.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-12_000); });
         if (sandboxEnabled) assert.equal(await app.evaluate(({ app }) => app.commandLine.hasSwitch('no-sandbox')), false);
         const page = await waitForRenderer(app);
         await page.getByRole('heading', { name: 'DOM SEO Tracker Lite', exact: true }).waitFor();
@@ -72,6 +74,7 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
         });
         const growthTimingsMs = [];
         async function startFleet(count) {
+            phase = `starting ${count} browsers`;
             await page.getByLabel('Browsers', { exact: true }).fill(String(count));
             const started = Date.now();
             await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
@@ -87,6 +90,7 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
             growthTimingsMs.push({ count, elapsed: Date.now() - started });
         }
         async function stopFleet() {
+            phase = 'stopping browsers';
             await page.getByRole('button', { name: 'Stop SEO Tracker', exact: true }).click();
             await waitForAutomation(page, (value) => !value.running && !value.preparingBrowsers);
             await page.waitForFunction(() => !Array.from(document.querySelectorAll('button'))
@@ -112,6 +116,16 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
         assert.ok(progress.some((value) => value.count === 20 && value.ready > 10 && value.ready < 20));
         await app.close(); app = null;
         console.log(JSON.stringify({ artifact: path.basename(target), sandboxEnabled, rendererLoaded: true, workspaceCount: 20, proxySourceSelection: true, editableProxyEndpoint: true, inputValidation: true, browserGrowth: true, preparationProgress: true, cancelledGrowth: true, restartAfterCancellation: true, growthTimingsMs, gracefulClose: true }));
+    } catch (error) {
+        console.error(`Runtime smoke failed while ${phase}. Native stderr: ${stderr}`);
+        if (app) {
+            try {
+                console.error(JSON.stringify(await withinDeadline(app.evaluate(({ app, webContents }) => ({
+                    mainReady: app.isReady(), contents: webContents.getAllWebContents().filter((wc) => !wc.isDestroyed()).map((wc) => ({ id: wc.id, type: wc.getType(), url: wc.getURL(), loading: wc.isLoading(), crashed: wc.isCrashed() }))
+                })), 5_000, 'Failure diagnostic'), null, 2));
+            } catch (diagnosticError) { console.error(diagnosticError.message); }
+        }
+        throw error;
     } finally {
         if (app) await app.close().catch(() => {});
         for (const server of servers) {
