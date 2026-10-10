@@ -72,6 +72,12 @@ function processStart(pid) {
         await page.waitForFunction(() => document.querySelectorAll('.browser-card').length === 10);
         report.startupMs = performance.now() - launchStart; report.checks.rendererLoaded = true;
         const defaults = await page.locator('.tracker-controls input').evaluateAll((inputs) => inputs.map((input) => input.value));
+        const hasProxySourceControl = await page.locator('[data-dom-proxy-source]').count() === 1;
+        if (hasProxySourceControl) {
+            assert.match(defaults.shift(), /^https:\/\/api\.proxyscrape\.com\/v4\/free-proxy-list\/get/);
+            assert.equal(await page.getByLabel('Proxy source', { exact: true }).inputValue(), 'proxyscrape-free');
+            report.checks.proxySourceSelection = true;
+        }
         assert.deepEqual(defaults, ['', '', '', '10', '20', '600']); report.checks.defaultsPreserved = true;
         await application.evaluate(() => global.__probe.resetCpu());
         await pause(5000); await snapshot('idle', page);
