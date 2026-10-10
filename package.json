@@ -1,8 +1,8 @@
 {
   "name": "dom",
   "productName": "DOM",
-  "version": "0.5.5",
-  "description": "DOM v0.5.5, simultaneous multi-keyword desktop application",
+  "version": "0.5.6",
+  "description": "DOM v0.5.6, simultaneous multi-keyword desktop application",
   "author": "DOM",
   "license": "MIT",
   "private": true,
@@ -36,6 +36,7 @@
       "src/renderer/**/*",
       "src/shared/**/*",
       "src/proxy/AllWorkingProxyProvider.js",
+      "src/proxy/ProxyScrapeProvider.js",
       "src/proxy/ProxyParser.js",
       "third-party/**/*",
       "package.json"
@@ -64,6 +65,6 @@
       "shortcutName": "DOM"
     }
   },
-  "linuxRelease": "v0.5.5-linux.1",
-  "windowsRelease": "v0.5.5"
+  "linuxRelease": "v0.5.6-linux.1",
+  "windowsRelease": "v0.5.6"
 }

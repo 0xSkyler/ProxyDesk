@@ -9,7 +9,7 @@ const entries = asar.listPackage(archive).map((stored) => ({ stored, file: store
 const files = entries.map(({ file }) => file);
 for (const { stored, file } of entries) {
     assert.ok(!file.includes('node_modules'), `Unexpected production dependency: ${file}`);
-    assert.ok(!/\/tests\/|\/scripts\/|\/docs\/|ProxyValidator|ProxyScorer|ProxyScrapeProvider|\.exe$|\.node$/.test(file), `Unexpected packaged file: ${file}`);
+    assert.ok(!/\/tests\/|\/scripts\/|\/docs\/|ProxyValidator|ProxyScorer|\.exe$|\.node$/.test(file), `Unexpected packaged file: ${file}`);
     if (/\.(?:js|css|html)$/.test(file)) {
         const local = path.resolve(__dirname, '..', file.slice(1));
         assert.deepEqual(asar.extractFile(archive, stored.slice(1)), fs.readFileSync(local), `Stale packaged source: ${file}`);
@@ -19,9 +19,10 @@ for (const expected of ['/src/main/main.js', '/src/preload/preload.js', '/src/re
 const metadataEntry = entries.find(({ file }) => file === '/package.json');
 assert.ok(metadataEntry, 'Missing /package.json');
 const metadata = JSON.parse(asar.extractFile(archive, metadataEntry.stored.slice(1)));
+const expectedMetadata = require('../package.json');
 assert.deepEqual(
     { name: metadata.name, productName: metadata.productName, version: metadata.version },
-    { name: 'dom', productName: 'DOM', version: '0.5.5' },
-    'Packaged identity is not DOM v0.5.5'
+    { name: expectedMetadata.name, productName: expectedMetadata.productName, version: expectedMetadata.version },
+    `Packaged identity is not DOM v${expectedMetadata.version}`
 );
 console.log(`Production archive verified: ${files.length} entries, DOM v${metadata.version}, no npm dependency tree or legacy validator.`);

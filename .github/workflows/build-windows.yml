@@ -1,4 +1,4 @@
-name: DOM v0.5.5 Windows build and release
+name: DOM v0.5.6 Windows build and release
 
 on:
   pull_request:
@@ -42,8 +42,8 @@ jobs:
       - name: Install into a clean directory
         shell: pwsh
         run: |
-          $installer = Resolve-Path 'release-windows/DOM-v0.5.5-Windows-x64-Setup.exe'
-          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.5-installed'
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.6-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.6-installed'
           $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
           $installedExecutable = Join-Path $installDirectory 'DOM.exe'
@@ -55,15 +55,15 @@ jobs:
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $installer = Get-Item 'release-windows/DOM-v0.5.5-Windows-x64-Setup.exe'
+          $installer = Get-Item 'release-windows/DOM-v0.5.6-Windows-x64-Setup.exe'
           $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
-          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.5-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.6-Windows-x64-SHA256SUMS.txt' -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: DOM-v0.5.5-Windows-x64
+          name: DOM-v0.5.6-Windows-x64
           path: |
-            release-windows/DOM-v0.5.5-Windows-x64-Setup.exe
-            release-windows/DOM-v0.5.5-Windows-x64-SHA256SUMS.txt
+            release-windows/DOM-v0.5.6-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.6-Windows-x64-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -77,7 +77,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.5-Windows-x64
+          name: DOM-v0.5.6-Windows-x64
           path: release-assets
       - name: Publish verified Windows release
         env:
@@ -89,5 +89,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
           else
-            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.5 for Windows" --notes "DOM v0.5.5 adds simultaneous multi-keyword assignment across the existing browser fleet while retaining the recovered proxy, Google navigation, target matching, Keep Alive, rotation and browser-control workflow. This x64 installer was built, installed and runtime-smoke-tested on a native GitHub Windows runner. SHA-256 verification is included. The installer is not Authenticode-signed, so Windows SmartScreen may ask for confirmation."
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.6 for Windows" --notes "DOM v0.5.6 fixes the blank about:blank navigation race, reports failed Google navigation accurately, and adds user-selectable All Working and ProxyScrape Free APIs with an editable endpoint. Simultaneous multi-keyword assignment and the recovered browser workflow remain intact. This x64 installer was built, installed and runtime-smoke-tested on a native GitHub Windows runner. SHA-256 verification is included. The installer is not Authenticode-signed, so Windows SmartScreen may ask for confirmation."
           fi

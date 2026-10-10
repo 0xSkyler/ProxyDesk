@@ -16,11 +16,20 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
         const page = await app.firstWindow();
         await page.getByRole('heading', { name: 'DOM SEO Tracker Lite', exact: true }).waitFor();
         await page.waitForFunction(() => document.querySelectorAll('.browser-card').length === 10);
+        const source = page.getByLabel('Proxy source', { exact: true });
+        const endpoint = page.getByLabel('Proxy API URL (editable)', { exact: true });
+        await source.waitFor();
+        assert.equal(await source.inputValue(), 'proxyscrape-free');
+        assert.match(await endpoint.inputValue(), /^https:\/\/api\.proxyscrape\.com\//);
+        await source.selectOption('all-working');
+        assert.equal(await endpoint.inputValue(), 'http://169.58.35.69/data/all-working.txt');
         const state = await page.evaluate(() => window.app.automation.getState());
         assert.equal(state.running, false); assert.equal(state.browserCount, 10);
         await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
         await page.getByText('Enter at least one keyword and a target website.', { exact: true }).waitFor();
+        const configured = await page.evaluate(() => window.app.automation.getState());
+        assert.equal(configured.proxySource, 'all-working');
         await app.close(); app = null;
-        console.log(JSON.stringify({ artifact: path.basename(target), sandboxEnabled, rendererLoaded: true, workspaceCount: 10, inputValidation: true, gracefulClose: true }));
+        console.log(JSON.stringify({ artifact: path.basename(target), sandboxEnabled, rendererLoaded: true, workspaceCount: 10, proxySourceSelection: true, editableProxyEndpoint: true, inputValidation: true, gracefulClose: true }));
     } finally { if (app) await app.close().catch(() => {}); fs.rmSync(profile, { recursive: true, force: true }); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

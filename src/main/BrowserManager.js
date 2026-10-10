@@ -193,7 +193,13 @@ class BrowserManager extends node_events_1.EventEmitter {
         // request on the page has finished". Modern sites can keep requests open
         // indefinitely; DOM automation must not be blocked by those background
         // requests. As soon as the document DOM exists, the browser is usable.
-        wc.on('did-start-loading', () => this.updateState(managed, { loading: true, connectionStatus: 'loading' }));
+        const readyStatus = () => {
+            const currentUrl = wc.getURL();
+            if (!currentUrl || currentUrl === 'about:blank')
+                return managed.state.proxy ? 'proxy-checking' : 'idle';
+            return 'connected';
+        };
+        wc.on('did-start-loading', () => this.updateState(managed, { loading: true, connectionStatus: 'loading', errorMessage: undefined }));
         wc.on('dom-ready', () => {
             if (extractGoogleBlockContinueUrl(wc.getURL()))
                 return;
@@ -201,7 +207,8 @@ class BrowserManager extends node_events_1.EventEmitter {
                 loading: false,
                 canGoBack: wc.canGoBack(),
                 canGoForward: wc.canGoForward(),
-                connectionStatus: 'connected'
+                connectionStatus: readyStatus(),
+                errorMessage: undefined
             });
         });
         wc.on('did-stop-loading', () => {
@@ -211,7 +218,9 @@ class BrowserManager extends node_events_1.EventEmitter {
                 loading: false,
                 canGoBack: wc.canGoBack(),
                 canGoForward: wc.canGoForward(),
-                connectionStatus: 'connected'
+                connectionStatus: managed.state.connectionStatus === 'proxy-failed'
+                    ? 'proxy-failed'
+                    : readyStatus()
             });
         });
         wc.on('did-navigate', (_e, url) => {
@@ -421,6 +430,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.updateState(managed, {
             proxy,
             connectionStatus: proxy ? 'proxy-checking' : 'no-proxy',
+            errorMessage: undefined,
             keepAliveEnabled: false,
             keepAliveActivity: 'idle'
         });
@@ -435,13 +445,10 @@ class BrowserManager extends node_events_1.EventEmitter {
             proxyBypassRules: '<local>'
         });
         await managed.session.closeAllConnections();
-        if (managed.disposed || this.disposed) return;
-        try {
-            await managed.view.webContents.reload();
-        }
-        catch (err) {
-            Logger_1.logger.warn('browser', `Browser ${id} failed to reload after proxy change: ${err.message}`);
-        }
+        // Do not reload the previous page here. webContents.reload() is
+        // fire-and-forget, so the old about:blank reload could race and win
+        // against the Google load started immediately after assignment.
+        // The automation layer performs the first navigation explicitly.
     }
     async checkIp(id, ipCheckUrl) {
         const managed = this.get(id);
@@ -532,7 +539,24 @@ class BrowserManager extends node_events_1.EventEmitter {
                 wc.removeListener('dom-ready', onDomReady);
             }
             if (loadError && !isGoogleSearchResultsUrl(wc.getURL())) {
+                wc.stop();
+                this.updateState(managed, {
+                    loading: false,
+                    connectionStatus: 'proxy-failed',
+                    errorMessage: loadError
+                });
                 throw new Error(loadError);
+            }
+            const currentUrl = wc.getURL();
+            if (!isGoogleSearchResultsUrl(currentUrl) && !extractGoogleBlockContinueUrl(currentUrl)) {
+                const message = `Google navigation timed out while using this proxy (current page: ${currentUrl || 'none'}).`;
+                wc.stop();
+                this.updateState(managed, {
+                    loading: false,
+                    connectionStatus: 'proxy-failed',
+                    errorMessage: message
+                });
+                throw new Error(message);
             }
         };
         for (let pageIndex = 0; pageIndex < pagesToScan; pageIndex += 1) {

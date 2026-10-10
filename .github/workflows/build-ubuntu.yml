@@ -1,4 +1,4 @@
-name: DOM v0.5.5 Linux build and regression
+name: DOM v0.5.6 Linux build and regression
 
 on:
   push:
@@ -47,7 +47,7 @@ jobs:
         run: xvfb-run -a node scripts/benchmark.cjs release-linux/linux-unpacked . .measurements/smoke.json 2 3
       - name: Verify AppImage startup and clean exit
         run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.5-linux-x86_64.AppImage
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.6-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
       - name: Verify installed production sandbox
         run: |
@@ -68,7 +68,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DOM-v0.5.5-Ubuntu-x64
+          name: DOM-v0.5.6-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
@@ -101,12 +101,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.5-Ubuntu-x64
+          name: DOM-v0.5.6-Ubuntu-x64
           path: .measurements/download
       - name: Prepare packaged runtime and hash-verified reference (benchmark only)
         run: |
           mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/DOM-v0.5.5-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          tar -xzf .measurements/download/DOM-v0.5.6-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
           npm run recover
           node scripts/compare-reference.cjs
       - name: Measure original v0.5.4
@@ -150,7 +150,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.5-Ubuntu-x64
+          name: DOM-v0.5.6-Ubuntu-x64
           path: release-linux
       - uses: actions/download-artifact@v4
         with:
@@ -173,4 +173,4 @@ jobs:
           cd release-linux
           sha256sum *.AppImage *.tar.gz > SHA256SUMS
           cd ..
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "DOM v0.5.5 - simultaneous keywords" --notes "DOM desktop release with simultaneous keyword assignment across the existing browser fleet. Proxy assignment, Google navigation, target matching, challenge handling, Keep Alive, rotation and browser controls retain the recovered workflow. Ubuntu CI runs source tests, packaged Electron and AppImage checks, an installed sandbox check and paired runtime measurements before publishing."
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "DOM v0.5.6 - selectable proxy APIs" --notes "DOM desktop release with simultaneous keyword assignment, user-selectable All Working and ProxyScrape Free APIs, editable provider endpoints, and corrected first navigation/status handling. Target matching, challenge handling, Keep Alive, rotation and browser controls retain the recovered workflow. Ubuntu CI runs source tests, packaged Electron and AppImage checks, an installed sandbox check and paired runtime measurements before publishing."

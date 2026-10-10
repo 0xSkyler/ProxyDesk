@@ -40,7 +40,12 @@ for (const [file, exported, field] of [['BrowserManager.js', 'BrowserManager', '
 // challenge and selector code is never modified by this harness.
 if (process.env.DOM_FIXTURE_API) {
     const nativeFetch = global.fetch;
-    global.fetch = (url, options) => nativeFetch(url === 'http://169.58.35.69/data/all-working.txt' ? process.env.DOM_FIXTURE_API : url, options);
+    global.fetch = (url, options) => {
+        const requested = String(url);
+        const isProxyFeed = requested === 'http://169.58.35.69/data/all-working.txt' ||
+            requested.startsWith('https://api.proxyscrape.com/v4/free-proxy-list/get');
+        return nativeFetch(isProxyFeed ? process.env.DOM_FIXTURE_API : url, options);
+    };
     const module = require(path.join(mainDir, 'BrowserManager.js'));
     module.BrowserManager.prototype.broadcastSearch = async function (id, query) {
         probe.searches.push({ browserId: id, query });

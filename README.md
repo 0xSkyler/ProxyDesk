@@ -1,4 +1,4 @@
-# DOM v0.5.5
+# DOM v0.5.6
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -16,11 +16,24 @@ refreshes the proxies and browser sessions. All existing target matching, Google
 challenge handling, result opening, Keep Alive, proxy fetching and controls are
 unchanged.
 
+## Proxy sources
+
+Choose **All Working API** or **ProxyScrape Free API** before starting. DOM shows
+the selected provider's URL in an editable field, so a replacement endpoint can
+be pasted without rebuilding the app. ProxyScrape Free is the default. Changing
+the provider is disabled while a run is active; stop the tracker first.
+
+Public lists can contain dead proxies. DOM no longer marks an assigned proxy as
+Ready merely because `about:blank` loaded. The card stays at **Proxy assigned**
+until a real page reaches DOM readiness, and failed or timed-out Google navigation
+is reported as **Proxy failed**. Each manual or scheduled rotation advances to a
+new portion of a stable provider list instead of reusing its first entries.
+
 ## Build and run
 
 ### Windows download
 
-[Download DOM v0.5.5 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.5/DOM-v0.5.5-Windows-x64-Setup.exe)
+[Download DOM v0.5.6 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.6/DOM-v0.5.6-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -36,7 +49,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.5-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.6-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -59,14 +72,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.5-linux-x86_64.AppImage
-./DOM-v0.5.5-linux-x86_64.AppImage
+chmod +x DOM-v0.5.6-linux-x86_64.AppImage
+./DOM-v0.5.6-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.5-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.6-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -81,7 +94,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.5-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.6-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -97,7 +110,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.5-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.6-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -121,7 +134,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch CI publishes the immutable `v0.5.5-linux.1` release only after native
+Main-branch CI publishes the immutable `v0.5.6-linux.1` release only after native
 build, packaged smoke tests and original/optimized fixture comparison succeed.
 The original Windows release is retained. The installer checks host prerequisites;
 the target VPS's display, sandbox configuration and live proxy/search behavior

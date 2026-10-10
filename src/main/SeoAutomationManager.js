@@ -5,8 +5,10 @@ const node_events_1 = require("node:events");
 const automation_1 = require("../shared/types/automation");
 const browser_1 = require("../shared/types/browser");
 const seo_1 = require("../shared/seo");
+const ProxyManager_1 = require("./ProxyManager");
 const Logger_1 = require("./Logger");
 const { cancellableDelay } = require("./runtime");
+const DEFAULT_PROXY_SOURCE = (0, ProxyManager_1.resolveProxySource)();
 function createCycleController() {
     const controller = new AbortController();
     // One sleeping monitor per existing workspace is expected, not a leak.
@@ -18,7 +20,7 @@ function createCycleController() {
 /**
  * Single-purpose SEO Tracker orchestration:
  *
- * All Working API -> direct exclusive assignment
+ * User-selected proxy API -> direct exclusive assignment
  * -> continuous Google monitoring -> challenge pause/resume
  * -> exact-host result click -> repeating same-host Keep Alive
  * -> rotate and restart on the user-configured cadence.
@@ -35,7 +37,9 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
     state = {
         running: false,
         cycleInProgress: false,
-        proxySource: 'All Working API',
+        proxySource: DEFAULT_PROXY_SOURCE.id,
+        proxySourceLabel: DEFAULT_PROXY_SOURCE.label,
+        proxyApiUrl: DEFAULT_PROXY_SOURCE.endpoint,
         query: '',
         targetWebsite: '',
         intervalSec: 600,
@@ -61,6 +65,19 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
     isRunning() {
         return this.state.running;
     }
+    configureProxy(config) {
+        if (this.state.running)
+            throw new Error('Stop SEO Tracker before changing the proxy source.');
+        const source = (0, ProxyManager_1.resolveProxySource)(config?.source, config?.endpoint);
+        this.state = {
+            ...this.state,
+            proxySource: source.id,
+            proxySourceLabel: source.label,
+            proxyApiUrl: source.endpoint
+        };
+        this.emitState();
+        return this.getState();
+    }
     async start(config) {
         const query = config.query.trim();
         const keywords = parseAutomationKeywords(query);
@@ -81,6 +98,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const browserCount = (0, automation_1.normalizeBrowserCount)(config.browserCount);
         const maxPages = (0, automation_1.normalizeSeoMaxPages)(config.maxPages);
         const intervalSec = (0, automation_1.normalizeAutomationIntervalSeconds)(config.intervalSec);
+        const proxySource = (0, ProxyManager_1.resolveProxySource)(config.proxySource ?? this.state.proxySource, config.proxyApiUrl ?? this.state.proxyApiUrl);
         if (keywords.length > browserCount) {
             throw new Error(`Select at least ${keywords.length} browsers to run all keywords at the same time.`);
         }
@@ -96,7 +114,9 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.state = {
             running: true,
             cycleInProgress: true,
-            proxySource: 'All Working API',
+            proxySource: proxySource.id,
+            proxySourceLabel: proxySource.label,
+            proxyApiUrl: proxySource.endpoint,
             query,
             targetWebsite,
             controlledTestHost: controlledTestHost || undefined,
@@ -216,7 +236,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.cycleController = createCycleController();
         const cycleNumber = this.state.cycleNumber + 1;
         const browserIds = [...this.state.browserIds];
-        const { query, targetWebsite, controlledTestHost, maxPages } = this.state;
+        const { query, targetWebsite, controlledTestHost, maxPages, proxySource, proxyApiUrl } = this.state;
         const keywords = parseAutomationKeywords(query);
         const browserQueries = new Map(browserIds.map((browserId, index) => [browserId, keywords[index % keywords.length] ?? query]));
         this.state = {
@@ -259,7 +279,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     assignedBrowsers: assigned
                 };
                 this.emitState();
-            });
+            }, { source: proxySource, endpoint: proxyApiUrl });
             await Promise.allSettled(seoTasks);
             if (!this.isCurrent(generation))
                 return;
