@@ -18,7 +18,14 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
         await page.waitForFunction(() => document.querySelectorAll('.browser-card').length === 10);
         const source = page.getByLabel('Proxy source', { exact: true });
         const endpoint = page.getByLabel('Proxy API URL (editable)', { exact: true });
-        await source.waitFor();
+        await source.waitFor().catch(async (error) => {
+            console.error(JSON.stringify(await page.evaluate(() => ({
+                providerControls: document.documentElement.dataset.domProviderControls ?? 'not-loaded',
+                scripts: Array.from(document.scripts, (script) => script.src),
+                trackerControls: document.querySelector('.tracker-controls')?.innerText ?? null
+            }))));
+            throw error;
+        });
         assert.equal(await source.inputValue(), 'proxyscrape-free');
         assert.match(await endpoint.inputValue(), /^https:\/\/api\.proxyscrape\.com\//);
         await source.selectOption('all-working');

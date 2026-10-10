@@ -8,6 +8,7 @@ const SOURCE_DEFAULTS = Object.freeze({
         endpoint: 'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text'
     }
 });
+document.documentElement.dataset.domProviderControls = 'loaded';
 
 let latestState = null;
 let sourceSelect = null;
@@ -107,6 +108,7 @@ async function mount() {
 
     sourceSelect = document.createElement('select');
     sourceSelect.dataset.domProxySource = 'true';
+    sourceSelect.setAttribute('aria-label', 'Proxy source');
     for (const [value, source] of Object.entries(SOURCE_DEFAULTS)) {
         const option = document.createElement('option');
         option.value = value;
@@ -116,6 +118,7 @@ async function mount() {
 
     endpointInput = document.createElement('input');
     endpointInput.type = 'url';
+    endpointInput.setAttribute('aria-label', 'Proxy API URL (editable)');
     endpointInput.placeholder = 'https://proxy-provider.example/list.txt';
     endpointInput.autocomplete = 'off';
     endpointInput.spellcheck = false;
@@ -137,6 +140,7 @@ async function mount() {
         createLabel('Proxy source', sourceSelect),
         createLabel('Proxy API URL (editable)', endpointInput, 'proxy-api-endpoint')
     );
+    document.documentElement.dataset.domProviderControls = 'mounted';
 
     const state = await window.app.automation.getState();
     applyState(state);
