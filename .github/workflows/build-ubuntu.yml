@@ -38,7 +38,7 @@ jobs:
       - run: npm run check
       - run: npm test
       - name: Check the bundled Electron Node runtime
-        run: ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron --test tests/*.test.cjs
+        run: node scripts/check-bundled-runtime.cjs
       - name: Build from tracked application source
         run: npm run package:linux
       - name: Check production archive

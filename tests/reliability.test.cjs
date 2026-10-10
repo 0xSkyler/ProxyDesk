@@ -277,7 +277,7 @@ test('overlapping proxy changes settle in request order without blocking other b
 });
 test('main quit awaits owned cleanup and disposes handlers before final quit', async () => {
     const electron = fakeElectron(); const handlers = new Map(); const windows = []; const intervals = new Set();
-    const rendererShown = deferred();
+    const rendererShown = deferred(), quitCompleted = deferred();
     class BrowserWindow extends EventEmitter {
         constructor() { super(); Object.assign(this, electron.window); this.webContents = new EventEmitter(); this.webContents.isDestroyed = () => false; this.webContents.send = () => {}; windows.push(this); }
         async loadFile(file) { this.file = file; }
@@ -290,7 +290,7 @@ test('main quit awaits owned cleanup and disposes handlers before final quit', a
     electron.session.defaultSession = { setPermissionRequestHandler() {} };
     electron.app.whenReady = () => Promise.resolve();
     let finalQuit = false;
-    electron.app.quit = () => { const event = { prevented: false, preventDefault() { this.prevented = true; } }; electron.app.emit('before-quit', event); if (!event.prevented) finalQuit = true; };
+    electron.app.quit = () => { const event = { prevented: false, preventDefault() { this.prevented = true; } }; electron.app.emit('before-quit', event); if (!event.prevented) { finalQuit = true; quitCompleted.resolve(); } };
     electron.app.exit = () => { throw new Error('Unexpected forced exit'); };
     const testProcess = Object.assign(new EventEmitter(), { env: { NODE_ENV: 'production' }, platform: 'linux', pid: process.pid });
     loadTree(root, electron, { process: testProcess, setInterval: (fn) => { intervals.add(fn); return fn; }, clearInterval: (fn) => intervals.delete(fn) })('main/main.js');
@@ -302,6 +302,7 @@ test('main quit awaits owned cleanup and disposes handlers before final quit', a
     electron.app.quit(); await tick();
     assert.equal(finalQuit, false); assert.equal(handlers.size, 0); assert.equal(intervals.size, 0);
     assert.equal(electron.views.every((view) => view.webContents.isDestroyed()), true);
-    pending.resolve(); for (let i = 0; i < 50 && !finalQuit; i++) await tick();
+    pending.resolve();
+    await withTimeout(quitCompleted.promise, 2_000, () => { throw new Error('Owned cleanup did not complete before quit.'); });
     assert.equal(finalQuit, true);
 });
