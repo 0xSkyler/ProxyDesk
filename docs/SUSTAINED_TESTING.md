@@ -27,7 +27,7 @@ The desktop launcher previously imported only present environment variables and
 called `systemctl start`. It failed a scripted service test with a prior
 start-limit-hit state. It now clears absent display variables and resets the
 failed unit before an explicit new launch. This retains the five-attempt crash
-restart limit and uses the same ProxyDesk task defaults after reopening. See the
+restart limit and uses the same DOM task defaults after reopening. See the
 upstream [systemctl reset-failed documentation](https://github.com/systemd/systemd/blob/main/man/systemctl.xml).
 The service-command test does not substitute for reconnecting a real VPS desktop.
 It also covers a never-loaded unit on first launch and propagation of start errors.

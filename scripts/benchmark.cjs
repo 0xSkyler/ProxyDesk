@@ -8,14 +8,14 @@ const assert = require('node:assert/strict');
 const { performance } = require('node:perf_hooks');
 const { _electron } = require('playwright-core');
 const asar = require('@electron/asar');
-const { withinDeadline, waitForAutomation } = require('./benchmark-state.cjs');
+const { withinDeadline, waitForAutomation, waitForRenderer } = require('./benchmark-state.cjs');
 const [runtimeArg, sourceArg, outputArg, durationArg = '60', countArg = '10'] = process.argv.slice(2);
 if (!runtimeArg || !sourceArg || !outputArg) throw new Error('Usage: benchmark.cjs <linux-unpacked> <source-app> <output.json> [active seconds=60] [browsers=10]');
 const runtime = path.resolve(runtimeArg), source = path.resolve(sourceArg), output = path.resolve(outputArg);
 const activeMs = Number(durationArg) * 1000, count = Number(countArg);
 assert.ok(Number.isFinite(activeMs) && activeMs >= 1000 && activeMs <= 24 * 3600 * 1000 && Number.isInteger(count) && count >= 1 && count <= 100);
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'proxydesk-benchmark-'));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'dom-benchmark-'));
 const servers = []; let application, exitObserved = false;
 const report = { schema: 2, platform: os.platform(), release: os.release(), arch: os.arch(), cpus: os.cpus().length, electron: require('../package.json').devDependencies.electron, testedBrowserCount: count, activeSeconds: activeMs / 1000, rendering: 'software/Xvfb', sandboxDisabled: true, scenario: 'local HTTP proxy fixtures; external search discovery substituted, original scroll/link/cycle code', samples: [], checks: {} };
 async function server(handler) {
@@ -24,7 +24,7 @@ async function server(handler) {
 }
 function fixture(req, res) {
     res.setHeader('Content-Type', 'text/html');
-    res.end(`<html><head><link rel="icon" href="data:,"></head><body><article><h1>Local article fixture</h1>${Array.from({ length: 80 }, (_, i) => `<p>Local scrolling content ${i} for ProxyDesk rendering verification.</p>`).join('')}${Array.from({ length: 100 }, (_, i) => `<a href="http://fixture.local/article/${i}">Read local article number ${i}</a><br>`).join('')}</article></body></html>`);
+    res.end(`<html><head><link rel="icon" href="data:,"></head><body><article><h1>Local article fixture</h1>${Array.from({ length: 80 }, (_, i) => `<p>Local scrolling content ${i} for DOM rendering verification.</p>`).join('')}${Array.from({ length: 100 }, (_, i) => `<a href="http://fixture.local/article/${i}">Read local article number ${i}</a><br>`).join('')}</article></body></html>`);
 }
 async function snapshot(stage, page) {
     const sample = await withinDeadline(application.evaluate(() => global.__probe.snapshot()), 15_000, 'Main-process snapshot');
@@ -63,24 +63,39 @@ function processStart(pid) {
         await fsp.writeFile(path.join(appTree, 'package.json'), JSON.stringify(metadata));
         await fsp.copyFile(path.join(__dirname, 'probe-entry.cjs'), path.join(appTree, 'probe-entry.cjs'));
         await asar.createPackage(appTree, path.join(resources, 'app.asar'));
-        const executable = path.join(temporary, 'proxydesk');
+        const executable = path.join(temporary, 'dom');
         const launchStart = performance.now();
-        application = await _electron.launch({ executablePath: executable, args: ['--no-sandbox', '--disable-gpu', '--host-resolver-rules=MAP fixture.local 127.0.0.1', `--user-data-dir=${temporary}/profile`], env: { ...process.env, NODE_ENV: 'production', PROXYDESK_FIXTURE_API: `http://127.0.0.1:${fixturePort}/proxies`, PROXYDESK_FIXTURE_SITE: 'http://fixture.local' }, timeout: 60000 });
+        application = await _electron.launch({ executablePath: executable, args: ['--no-sandbox', '--disable-gpu', '--host-resolver-rules=MAP fixture.local 127.0.0.1', `--user-data-dir=${temporary}/profile`], env: { ...process.env, NODE_ENV: 'production', DOM_FIXTURE_API: `http://127.0.0.1:${fixturePort}/proxies`, DOM_FIXTURE_SITE: 'http://fixture.local' }, timeout: 60000 });
         application.process().once('exit', () => { exitObserved = true; });
-        const page = await application.firstWindow();
-        await page.getByRole('heading', { name: 'ProxyDesk SEO Tracker Lite', exact: true }).waitFor();
+        const page = await waitForRenderer(application);
+        await page.getByRole('heading', { name: `${metadata.productName} SEO Tracker Lite`, exact: true }).waitFor();
         await page.waitForFunction(() => document.querySelectorAll('.browser-card').length === 10);
         report.startupMs = performance.now() - launchStart; report.checks.rendererLoaded = true;
         const defaults = await page.locator('.tracker-controls input').evaluateAll((inputs) => inputs.map((input) => input.value));
+        const hasProxySourceControl = await page.locator('[data-dom-proxy-source]').count() === 1;
+        if (hasProxySourceControl) {
+            assert.match(defaults.shift(), /^https:\/\/api\.proxyscrape\.com\/v4\/free-proxy-list\/get/);
+            assert.equal(await page.getByLabel('Proxy source', { exact: true }).inputValue(), 'proxyscrape-free');
+            report.checks.proxySourceSelection = true;
+        }
         assert.deepEqual(defaults, ['', '', '', '10', '20', '600']); report.checks.defaultsPreserved = true;
         await application.evaluate(() => global.__probe.resetCpu());
         await pause(5000); await snapshot('idle', page);
-        await page.getByLabel('Keywords (comma separated)').fill('first, second');
+        const keywordInput = page.locator('.tracker-controls label').filter({ hasText: 'Keywords' }).locator('input');
+        const fixtureKeywords = count > 1 ? 'first, second' : 'first';
+        await keywordInput.fill(fixtureKeywords);
         await page.getByLabel('Target website', { exact: true }).fill('fixture.local');
         await page.getByLabel('Browsers', { exact: true }).fill(String(count));
         await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
         await waitForAutomation(page, (state, number) => state.running && state.cycleNumber >= 1 && !state.cycleInProgress && state.assignedBrowsers === number, count);
         report.checks.startAndAssignment = true;
+        const firstCycleSearches = await application.evaluate(() => global.__probe.searches.slice(0, global.__probe.automation.getState().browserIds.length));
+        report.firstCycleSearches = firstCycleSearches;
+        if (metadata.probeOriginalMain.startsWith('src/')) {
+            const expectedQueries = Array.from({ length: count }, (_, index) => count > 1 && index % 2 === 1 ? 'second' : 'first');
+            assert.deepEqual(firstCycleSearches.map(({ query }) => query), expectedQueries);
+            report.checks.concurrentKeywords = true;
+        }
         await snapshot('active-start', page);
         const activeStart = performance.now();
         while (performance.now() - activeStart < activeMs) { await pause(Math.min(5000, activeMs - (performance.now() - activeStart))); await snapshot('active', page); }
@@ -100,6 +115,7 @@ function processStart(pid) {
         const counts = [];
         report.workspaceRecreationDetails = [];
         for (let round = 0; round < 3; round++) {
+            await keywordInput.fill('first');
             await page.getByLabel('Browsers', { exact: true }).fill('1');
             await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
             await waitForAutomation(page, (state) => state.running && state.cycleNumber >= 1 && !state.cycleInProgress && state.browserIds.length === 1 && state.assignedBrowsers === 1);

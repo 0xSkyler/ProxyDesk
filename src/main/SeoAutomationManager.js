@@ -5,8 +5,10 @@ const node_events_1 = require("node:events");
 const automation_1 = require("../shared/types/automation");
 const browser_1 = require("../shared/types/browser");
 const seo_1 = require("../shared/seo");
+const ProxyManager_1 = require("./ProxyManager");
 const Logger_1 = require("./Logger");
-const { cancellableDelay } = require("./runtime");
+const { cancellableDelay, waitForPreparation } = require("./runtime");
+const DEFAULT_PROXY_SOURCE = (0, ProxyManager_1.resolveProxySource)();
 function createCycleController() {
     const controller = new AbortController();
     // One sleeping monitor per existing workspace is expected, not a leak.
@@ -18,7 +20,7 @@ function createCycleController() {
 /**
  * Single-purpose SEO Tracker orchestration:
  *
- * All Working API -> direct exclusive assignment
+ * User-selected proxy API -> direct exclusive assignment
  * -> continuous Google monitoring -> challenge pause/resume
  * -> exact-host result click -> repeating same-host Keep Alive
  * -> rotate and restart on the user-configured cadence.
@@ -35,7 +37,11 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
     state = {
         running: false,
         cycleInProgress: false,
-        proxySource: 'All Working API',
+        preparingBrowsers: false,
+        preparedBrowsers: 0,
+        proxySource: DEFAULT_PROXY_SOURCE.id,
+        proxySourceLabel: DEFAULT_PROXY_SOURCE.label,
+        proxyApiUrl: DEFAULT_PROXY_SOURCE.endpoint,
         query: '',
         targetWebsite: '',
         intervalSec: 600,
@@ -61,6 +67,19 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
     isRunning() {
         return this.state.running;
     }
+    configureProxy(config) {
+        if (this.state.running)
+            throw new Error('Stop SEO Tracker before changing the proxy source.');
+        const source = (0, ProxyManager_1.resolveProxySource)(config?.source, config?.endpoint);
+        this.state = {
+            ...this.state,
+            proxySource: source.id,
+            proxySourceLabel: source.label,
+            proxyApiUrl: source.endpoint
+        };
+        this.emitState();
+        return this.getState();
+    }
     async start(config) {
         const query = config.query.trim();
         const keywords = parseAutomationKeywords(query);
@@ -81,6 +100,10 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const browserCount = (0, automation_1.normalizeBrowserCount)(config.browserCount);
         const maxPages = (0, automation_1.normalizeSeoMaxPages)(config.maxPages);
         const intervalSec = (0, automation_1.normalizeAutomationIntervalSeconds)(config.intervalSec);
+        const proxySource = (0, ProxyManager_1.resolveProxySource)(config.proxySource ?? this.state.proxySource, config.proxyApiUrl ?? this.state.proxyApiUrl);
+        if (keywords.length > browserCount) {
+            throw new Error(`Select at least ${keywords.length} browsers to run all keywords at the same time.`);
+        }
         this.stopTimerOnly();
         this.proxyManager.cancelCurrentFetch();
         this.generation += 1;
@@ -93,7 +116,11 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.state = {
             running: true,
             cycleInProgress: true,
-            proxySource: 'All Working API',
+            preparingBrowsers: true,
+            preparedBrowsers: 0,
+            proxySource: proxySource.id,
+            proxySourceLabel: proxySource.label,
+            proxyApiUrl: proxySource.endpoint,
             query,
             targetWebsite,
             controlledTestHost: controlledTestHost || undefined,
@@ -107,19 +134,29 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             totalProxies: 0,
             liveProxies: 0,
             assignedBrowsers: 0,
-            nextCycleAt: new Date(Date.now() + intervalSec * 1000).toISOString()
+            nextCycleAt: undefined
         };
         this.emitState();
         let browserIds;
         try {
-            browserIds = await this.ensureBrowserCount(browserCount);
+            const signal = this.cycleController.signal;
+            browserIds = await waitForPreparation(this.ensureBrowserCount(browserCount, {
+                signal,
+                onProgress: (readyIds) => {
+                    if (!this.isCurrent(generation) || !this.state.preparingBrowsers) return;
+                    this.state = { ...this.state, preparedBrowsers: readyIds.length, browserIds: [...readyIds] };
+                    this.emitState();
+                }
+            }), 60_000, signal, 'Browser preparation timed out. Try fewer browsers or retry Start.');
         }
         catch (err) {
             if (!this.isCurrent(generation)) return this.getState();
+            this.cycleController.abort();
             this.state = {
                 ...this.state,
                 running: false,
                 cycleInProgress: false,
+                preparingBrowsers: false,
                 nextCycleAt: undefined,
                 lastError: `Browser preparation failed: ${err.message}`
             };
@@ -132,6 +169,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                 ...this.state,
                 running: false,
                 cycleInProgress: false,
+                preparingBrowsers: false,
                 nextCycleAt: undefined,
                 lastError: 'No browser workspaces are available.'
             };
@@ -141,7 +179,10 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.state = {
             ...this.state,
             cycleInProgress: false,
-            browserIds
+            preparingBrowsers: false,
+            preparedBrowsers: browserIds.length,
+            browserIds,
+            nextCycleAt: new Date(Date.now() + intervalSec * 1000).toISOString()
         };
         this.emitState();
         this.timer = setInterval(() => {
@@ -176,6 +217,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             ...this.state,
             running: false,
             cycleInProgress: false,
+            preparingBrowsers: false,
             nextCycleAt: undefined
         };
         this.emitState();
@@ -213,9 +255,9 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.cycleController = createCycleController();
         const cycleNumber = this.state.cycleNumber + 1;
         const browserIds = [...this.state.browserIds];
-        const { query, targetWebsite, controlledTestHost, maxPages } = this.state;
+        const { query, targetWebsite, controlledTestHost, maxPages, proxySource, proxyApiUrl } = this.state;
         const keywords = parseAutomationKeywords(query);
-        const cycleQuery = keywords[(cycleNumber - 1) % keywords.length] ?? query;
+        const browserQueries = new Map(browserIds.map((browserId, index) => [browserId, keywords[index % keywords.length] ?? query]));
         this.state = {
             ...this.state,
             cycleInProgress: true,
@@ -242,7 +284,8 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             await this.proxyManager.fetchAssignDirect(browserIds, (assignment) => {
                 if (!this.isCurrent(generation))
                     return;
-                seoTasks.push(this.handleAssignment(generation, cycleNumber, assignment, cycleQuery, targetWebsite, controlledTestHost, maxPages));
+                const browserQuery = browserQueries.get(assignment.browserId) ?? query;
+                seoTasks.push(this.handleAssignment(generation, cycleNumber, assignment, browserQuery, targetWebsite, controlledTestHost, maxPages));
             }, (checked, total, working, assigned, fetched) => {
                 if (!this.isCurrent(generation))
                     return;
@@ -255,7 +298,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     assignedBrowsers: assigned
                 };
                 this.emitState();
-            });
+            }, { source: proxySource, endpoint: proxyApiUrl });
             await Promise.allSettled(seoTasks);
             if (!this.isCurrent(generation))
                 return;
@@ -265,7 +308,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                 lastCycleCompletedAt: new Date().toISOString()
             };
             this.emitState();
-            Logger_1.logger.info('application', `SEO cycle ${cycleNumber} (${cycleQuery}) complete: ${this.state.liveProxies} available, ` +
+            Logger_1.logger.info('application', `SEO cycle ${cycleNumber} (${keywords.join(', ')}) complete: ${this.state.liveProxies} available, ` +
                 `${this.state.assignedBrowsers}/${browserIds.length} browser(s) assigned.`);
         }
         catch (err) {
@@ -421,7 +464,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     result: {
                         ...result,
                         interactionStatus: 'click-failed',
-                        error: 'Target was detected, but the result could not be opened. ProxyDesk will retry in this session.'
+                        error: 'Target was detected, but the result could not be opened. DOM will retry in this session.'
                     }
                 });
                 await cancellableDelay(3_000, signal);

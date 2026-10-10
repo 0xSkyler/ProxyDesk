@@ -9,6 +9,7 @@ const IPC_CHANNELS = {
     browserSetKeepAliveAll: 'browser:setKeepAliveAll',
     browserStateChanged: 'browser:stateChanged',
     automationGetState: 'automation:getState',
+    automationConfigureProxy: 'automation:configureProxy',
     automationStart: 'automation:start',
     automationStop: 'automation:stop',
     automationRunNow: 'automation:runNow',
@@ -54,6 +55,7 @@ const api = {
     },
     automation: {
         getState: () => electron_1.ipcRenderer.invoke(IPC_CHANNELS.automationGetState),
+        configureProxy: (config) => electron_1.ipcRenderer.invoke(IPC_CHANNELS.automationConfigureProxy, config),
         start: (config) => electron_1.ipcRenderer.invoke(IPC_CHANNELS.automationStart, config),
         stop: () => electron_1.ipcRenderer.invoke(IPC_CHANNELS.automationStop),
         runNow: () => electron_1.ipcRenderer.invoke(IPC_CHANNELS.automationRunNow),

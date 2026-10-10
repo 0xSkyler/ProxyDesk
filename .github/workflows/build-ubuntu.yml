@@ -1,4 +1,4 @@
-name: Native Linux build and v0.5.4 regression
+name: DOM v0.5.7 Linux build and regression
 
 on:
   push:
@@ -38,37 +38,37 @@ jobs:
       - run: npm run check
       - run: npm test
       - name: Check the bundled Electron Node runtime
-        run: ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron --test tests/*.test.cjs
+        run: node scripts/check-bundled-runtime.cjs
       - name: Build from tracked application source
         run: npm run package:linux
       - name: Check production archive
         run: node scripts/check-package.cjs
       - name: Packaged renderer and lifecycle smoke test
-        run: xvfb-run -a node scripts/benchmark.cjs release-linux/linux-unpacked . .measurements/smoke.json 2 3
+        run: xvfb-run -a node scripts/benchmark.cjs release-linux/linux-unpacked . .measurements/smoke.json 2 20
       - name: Verify AppImage startup and clean exit
         run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/ProxyDesk-v0.5.4-linux-x86_64.AppImage
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.7-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
       - name: Verify installed production sandbox
         run: |
-          sudo install -d -m 755 /opt/proxydesk/ci
-          sudo cp -a release-linux/linux-unpacked/. /opt/proxydesk/ci/
-          sudo chown -R root:root /opt/proxydesk/ci
-          sudo chmod -R go-w /opt/proxydesk/ci
-          sudo chmod 755 /opt/proxydesk/ci/proxydesk
-          sudo chmod 4755 /opt/proxydesk/ci/chrome-sandbox
+          sudo install -d -m 755 /opt/dom/ci
+          sudo cp -a release-linux/linux-unpacked/. /opt/dom/ci/
+          sudo chown -R root:root /opt/dom/ci
+          sudo chmod -R go-w /opt/dom/ci
+          sudo chmod 755 /opt/dom/ci/dom
+          sudo chmod 4755 /opt/dom/ci/chrome-sandbox
           python3 - <<'PY'
           from pathlib import Path
           installer = Path('deploy/install-ubuntu.sh').read_text()
           profile = installer.split("<<'PROFILE'\n", 1)[1].split('\nPROFILE', 1)[0]
-          Path('/tmp/proxydesk-linux').write_text(profile + '\n')
+          Path('/tmp/dom-linux').write_text(profile + '\n')
           PY
-          sudo apparmor_parser -r /tmp/proxydesk-linux
-          PROXYDESK_TEST_SANDBOX=1 xvfb-run -a node scripts/smoke-runtime.cjs /opt/proxydesk/ci/proxydesk
+          sudo apparmor_parser -r /tmp/dom-linux
+          DOM_TEST_SANDBOX=1 xvfb-run -a node scripts/smoke-runtime.cjs /opt/dom/ci/dom
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          name: DOM-v0.5.7-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
@@ -77,7 +77,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ProxyDesk-Linux-packaged-smoke
+          name: DOM-Linux-packaged-smoke
           path: |
             .measurements/smoke.json
             .measurements/appimage-smoke.log
@@ -101,12 +101,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:
-          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          name: DOM-v0.5.7-Ubuntu-x64
           path: .measurements/download
       - name: Prepare packaged runtime and hash-verified reference (benchmark only)
         run: |
           mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/ProxyDesk-v0.5.4-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          tar -xzf .measurements/download/DOM-v0.5.7-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
           npm run recover
           node scripts/compare-reference.cjs
       - name: Measure original v0.5.4
@@ -128,7 +128,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ProxyDesk-Linux-baseline-comparison
+          name: DOM-Linux-baseline-comparison
           path: .measurements/*.json
           include-hidden-files: true
           if-no-files-found: error
@@ -136,7 +136,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ProxyDesk-Linux-comparison-report
+          name: DOM-Linux-comparison-report
           path: .measurements/comparison.md
           retention-days: 30
 
@@ -150,15 +150,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          name: DOM-v0.5.7-Ubuntu-x64
           path: release-linux
       - uses: actions/download-artifact@v4
         with:
-          name: ProxyDesk-Linux-comparison-report
+          name: DOM-Linux-comparison-report
           path: release-linux
       - uses: actions/download-artifact@v4
         with:
-          name: ProxyDesk-Linux-baseline-comparison
+          name: DOM-Linux-baseline-comparison
           path: release-linux
       - name: Publish verified Linux release
         env:
@@ -173,4 +173,4 @@ jobs:
           cd release-linux
           sha256sum *.AppImage *.tar.gz > SHA256SUMS
           cd ..
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "ProxyDesk v0.5.4 - Linux reliability update ${TAG##*.}" --notes "Native source build. Original v0.5.4 UI and task behavior retained. Lifecycle cancellation, shutdown cleanup, log bounds and dependency packaging improvements; release unread proxy API error bodies; bounded cancellation listeners for 100 workspaces; desktop relaunch recovery after a display failure. Ubuntu CI regression tests run against the build Node and bundled Electron Node runtimes. AppImage renderer smoke, installed sandbox and paired original/optimized fixture checks passed. Longer VPS soak and live search regression remain environment-specific checks."
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "DOM v0.5.7 - selectable proxy APIs" --notes "DOM desktop release with simultaneous keyword assignment, user-selectable All Working and ProxyScrape Free APIs, editable provider endpoints, and corrected first navigation/status handling. Target matching, challenge handling, Keep Alive, rotation and browser controls retain the recovered workflow. Ubuntu CI runs source tests, packaged Electron and AppImage checks, an installed sandbox check and paired runtime measurements before publishing."

@@ -4,9 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const deploymentTest = process.platform === 'linux' ? test : test.skip;
 
 function runLauncher({ failed = false, unloaded = false, failStart = false } = {}) {
-    const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'proxydesk-launch-test-'));
+    const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dom-launch-test-'));
     try {
         const installer = fs.readFileSync(path.join(__dirname, '../deploy/install-ubuntu.sh'), 'utf8');
         const launcher = installer.split("<<'LAUNCH'\n")[1].split('\nLAUNCH')[0];
@@ -28,22 +29,22 @@ esac
     } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 }
 
-test('desktop relaunch clears the failed start limit and stale display credentials', () => {
+deploymentTest('desktop relaunch clears the failed start limit and stale display credentials', () => {
     const { result, calls } = runLauncher({ failed: true });
     assert.equal(result.status, 0, result.stderr);
     assert.ok(calls.includes('--user import-environment DISPLAY'));
     assert.ok(calls.includes('--user import-environment XAUTHORITY'));
     assert.ok(calls.includes('--user unset-environment WAYLAND_DISPLAY'));
-    assert.ok(calls.indexOf('--user reset-failed proxydesk.service') < calls.indexOf('--user start proxydesk.service'));
+    assert.ok(calls.indexOf('--user reset-failed dom.service') < calls.indexOf('--user start dom.service'));
 });
 
-test('first desktop launch works when the service has never been loaded', () => {
+deploymentTest('first desktop launch works when the service has never been loaded', () => {
     const { result, calls } = runLauncher({ unloaded: true });
     assert.equal(result.status, 0, result.stderr);
-    assert.ok(calls.includes('--user start proxydesk.service'));
+    assert.ok(calls.includes('--user start dom.service'));
 });
 
-test('desktop launcher still reports a failed service start', () => {
+deploymentTest('desktop launcher still reports a failed service start', () => {
     const { result } = runLauncher({ failStart: true });
     assert.notEqual(result.status, 0);
 });

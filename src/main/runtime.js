@@ -28,4 +28,28 @@ function cancellableDelay(ms, signal) {
     });
 }
 
-module.exports = { withTimeout, cancellableDelay };
+function preparationCancelled() {
+    const error = new Error('Browser preparation cancelled.');
+    error.name = 'AbortError';
+    return error;
+}
+
+// Native Chromium operations do not all accept AbortSignal. Bound their wait,
+// consume late settlements, and always detach the cancellation listener/timer.
+function waitForPreparation(operation, ms, signal, message) {
+    return new Promise((resolve, reject) => {
+        let timer;
+        const finish = (error, value) => {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
+            if (error) reject(error); else resolve(value);
+        };
+        const abort = () => finish(preparationCancelled());
+        Promise.resolve(operation).then((value) => finish(null, value), (error) => finish(error));
+        if (signal?.aborted) { abort(); return; }
+        signal?.addEventListener('abort', abort, { once: true });
+        timer = setTimeout(() => finish(new Error(message)), ms);
+    });
+}
+
+module.exports = { withTimeout, cancellableDelay, waitForPreparation, preparationCancelled };

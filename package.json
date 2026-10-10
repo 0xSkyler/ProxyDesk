@@ -1,18 +1,19 @@
 {
-  "name": "proxydesk",
-  "productName": "ProxyDesk",
-  "version": "0.5.4",
-  "description": "ProxyDesk v0.5.4, deterministic native Linux build",
-  "author": "ProxyDesk",
+  "name": "dom",
+  "productName": "DOM",
+  "version": "0.5.7",
+  "description": "DOM v0.5.7, simultaneous multi-keyword desktop application",
+  "author": "DOM",
   "license": "MIT",
   "private": true,
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test tests/*.test.cjs",
+    "test": "node --test",
     "check": "node scripts/check-source.cjs",
     "recover": "node scripts/recover.cjs",
     "package:linux": "npm run check && electron-builder --linux AppImage tar.gz --x64 --publish never",
+    "package:windows": "npm run check && electron-builder --win nsis --x64 --publish never --config.directories.output=release-windows",
     "benchmark": "node scripts/benchmark.cjs"
   },
   "devDependencies": {
@@ -23,8 +24,8 @@
     "playwright-core": "1.62.1"
   },
   "build": {
-    "appId": "com.proxydesk.desktop",
-    "productName": "ProxyDesk",
+    "appId": "com.dom.desktop",
+    "productName": "DOM",
     "asar": true,
     "directories": {
       "output": "release-linux"
@@ -35,6 +36,7 @@
       "src/renderer/**/*",
       "src/shared/**/*",
       "src/proxy/AllWorkingProxyProvider.js",
+      "src/proxy/ProxyScrapeProvider.js",
       "src/proxy/ProxyParser.js",
       "third-party/**/*",
       "package.json"
@@ -45,8 +47,24 @@
         "tar.gz"
       ],
       "category": "Utility",
-      "artifactName": "ProxyDesk-v${version}-linux-${arch}.${ext}"
+      "artifactName": "DOM-v${version}-linux-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "DOM-v${version}-Windows-${arch}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "runAfterFinish": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DOM"
     }
   },
-  "linuxRelease": "v0.5.4-linux.2"
+  "linuxRelease": "v0.5.7-linux.1",
+  "windowsRelease": "v0.5.7"
 }

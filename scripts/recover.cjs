@@ -11,7 +11,7 @@ if (fs.existsSync(destination)) throw new Error(`Refusing to overwrite ${destina
 const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const installer = path.join(root, manifest.installer);
 if (hash(installer) !== manifest.installerSha256) throw new Error('Reference installer hash mismatch');
-const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'proxydesk-recovery-'));
+const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dom-recovery-'));
 const seven = require('7zip-bin').path7za;
 fs.chmodSync(seven, 0o755);
 function files(dir) { return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? files(path.join(dir, entry.name)) : [path.join(dir, entry.name)]); }

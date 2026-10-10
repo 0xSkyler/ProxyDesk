@@ -15,6 +15,7 @@ function registerIpc(deps) {
     electron_1.ipcMain.handle(ipc_1.IPC_CHANNELS.browserSetKeepAlive, (_event, id, enabled) => browserManager.setBrowserKeepAlive(id, enabled, enabled));
     electron_1.ipcMain.handle(ipc_1.IPC_CHANNELS.browserSetKeepAliveAll, (_event, enabled) => browserManager.setKeepAliveAll(enabled, enabled));
     electron_1.ipcMain.handle(ipc_1.IPC_CHANNELS.automationGetState, () => automationManager.getState());
+    electron_1.ipcMain.handle(ipc_1.IPC_CHANNELS.automationConfigureProxy, (_event, config) => automationManager.configureProxy(config));
     electron_1.ipcMain.handle(ipc_1.IPC_CHANNELS.automationStart, (_event, config) => automationManager.start(config));
     electron_1.ipcMain.handle(ipc_1.IPC_CHANNELS.automationStop, () => automationManager.stop());
     electron_1.ipcMain.handle(ipc_1.IPC_CHANNELS.automationRunNow, () => automationManager.runNow());
@@ -35,7 +36,7 @@ function registerIpc(deps) {
         for (const [emitter, event, listener] of listeners) emitter.removeListener(event, listener);
         for (const channel of [ipc_1.IPC_CHANNELS.browserGetAll, ipc_1.IPC_CHANNELS.browserSetBounds,
             ipc_1.IPC_CHANNELS.browserSetKeepAlive, ipc_1.IPC_CHANNELS.browserSetKeepAliveAll,
-            ipc_1.IPC_CHANNELS.automationGetState, ipc_1.IPC_CHANNELS.automationStart,
+            ipc_1.IPC_CHANNELS.automationGetState, ipc_1.IPC_CHANNELS.automationConfigureProxy, ipc_1.IPC_CHANNELS.automationStart,
             ipc_1.IPC_CHANNELS.automationStop, ipc_1.IPC_CHANNELS.automationRunNow]) electron_1.ipcMain.removeHandler(channel);
     };
 }

@@ -5,6 +5,7 @@ const { EventEmitter } = require('node:events');
 const path = require('node:path');
 const fs = require('node:fs');
 const { loadTree, fakeElectron } = require('./helpers.cjs');
+const { withTimeout } = require('../src/main/runtime');
 const root = path.resolve(__dirname, '../src');
 const tick = () => new Promise(setImmediate);
 const deferred = () => { let resolve; const promise = new Promise((r) => resolve = r); return { resolve, promise }; };
@@ -135,6 +136,10 @@ test('proxy change closes pooled connections while retaining proxy scheme and by
     assert.equal(manager.get(1).session.proxy.proxyRules, 'socks5://127.0.0.2:1080');
     assert.equal(manager.get(1).session.proxy.proxyBypassRules, '<local>');
     assert.equal(manager.get(1).session.connectionsClosed, 1);
+    assert.equal(manager.get(1).view.webContents.reloaded, undefined, 'proxy assignment must not race Google with an about:blank reload');
+    assert.equal(manager.get(1).state.connectionStatus, 'proxy-checking');
+    await manager.get(1).view.webContents.loadURL('https://www.google.com/search?q=test');
+    assert.equal(manager.get(1).state.connectionStatus, 'connected');
     await manager.assignProxy(1, null); assert.equal(manager.get(1).session.connectionsClosed, 2);
     await manager.destroyAll();
 });
@@ -153,27 +158,60 @@ test('stale preparation failure cannot overwrite a newer Start', async () => {
     const work = automation.start({ query: 'a', targetWebsite: 'example.test', browserCount: 1 }); automation.stop(); preparation.resolve([]); await work;
     assert.equal(automation.getState().lastError, undefined);
 });
-test('keyword ordering, concurrent assignment, browser bounds and Stop behavior remain', async () => {
+test('all keywords run concurrently across the existing browser fleet', async () => {
     const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
     const assignments = [], searches = [], enabled = [];
     const browser = { cancelMeasurementSession() {}, setBrowserKeepAlive(id, value) { enabled.push([id, value]); }, assignProxy: async (id, proxy) => assignments.push([id, proxy]), startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true, broadcastSearch: async (id, query) => { searches.push([id, query]); return { status: 'matched', interactionStatus: 'opened', matchedUrl: 'https://example.test/a' }; }, startControlledKeepAlive() {} };
     const proxies = { cancelCurrentFetch() {}, fetchAssignDirect: async (ids, callback) => ids.forEach((id) => callback({ browserId: id, proxy: { host: '127.0.0.1', port: id } })) };
     const automation = new SeoAutomationManager(proxies, browser, async () => [1, 2, 3]);
     await automation.start({ query: ' first, second ', targetWebsite: 'example.test', intervalSec: 30, browserCount: 3, maxPages: 20 }); await tick();
-    assert.deepEqual(searches.map((entry) => entry[1]), ['first', 'first', 'first']);
+    assert.deepEqual(searches, [[1, 'first'], [2, 'second'], [3, 'first']]);
     await automation.runNow(); await tick();
-    assert.deepEqual(searches.slice(3).map((entry) => entry[1]), ['second', 'second', 'second']);
+    assert.deepEqual(searches.slice(3), [[1, 'first'], [2, 'second'], [3, 'first']]);
     automation.stop(); assert.equal(automation.getState().running, false); assert.equal(automation.timer, null);
     assert.equal(assignments.filter(([, proxy]) => proxy).length, 6);
     assert.equal(enabled.filter(([, value]) => value).length, 0);
 });
+test('starting rejects a keyword list larger than the selected browser fleet', async () => {
+    const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
+    const automation = new SeoAutomationManager({ cancelCurrentFetch() {} }, {}, async () => [1]);
+    await assert.rejects(
+        automation.start({ query: 'first, second', targetWebsite: 'example.test', browserCount: 1, maxPages: 20 }),
+        /Select at least 2 browsers/
+    );
+    assert.equal(automation.getState().running, false);
+});
 test('direct proxy API deduplication keeps ordering and leaves surplus browsers unassigned', async () => {
-    const { ProxyManager } = loadTree(root, {}, { fetch: async () => ({ ok: true, text: async () => 'http://127.0.0.1:8080\nsocks5://127.0.0.1:8080\nsocks5://127.0.0.2:1080' }) })('main/ProxyManager.js');
+    const requested = [];
+    const { ProxyManager } = loadTree(root, {}, { fetch: async (url) => { requested.push(String(url)); return { ok: true, text: async () => 'http://127.0.0.1:8080\nsocks5://127.0.0.1:8080\nsocks5://127.0.0.2:1080' }; } })('main/ProxyManager.js');
     const manager = new ProxyManager(); const assigned = [];
     const summary = await manager.fetchAssignDirect([1, 2, 3], (value) => assigned.push(value));
     assert.equal(assigned.length, 2); assert.equal(summary.working, 2);
     assert.equal(summary.assignments[2].proxy, null);
     assert.equal(manager.fetchController, null);
+    assert.match(requested[0], /^https:\/\/api\.proxyscrape\.com\/v4\/free-proxy-list\/get/);
+    await manager.fetchAssignDirect([1], () => {}, undefined, { source: 'all-working', endpoint: 'https://feed.example.test/list.txt' });
+    assert.equal(requested[1], 'https://feed.example.test/list.txt');
+});
+test('proxy source configuration is user-selected and reaches the cycle unchanged', async () => {
+    const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
+    let sourceOptions;
+    const proxies = { cancelCurrentFetch() {}, fetchAssignDirect: async (_ids, _assign, _progress, options) => { sourceOptions = options; } };
+    const browser = { cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {} };
+    const automation = new SeoAutomationManager(proxies, browser, async () => [1]);
+    const configured = automation.configureProxy({ source: 'all-working', endpoint: 'https://feed.example.test/custom.txt' });
+    assert.equal(configured.proxySourceLabel, 'All Working API');
+    await automation.start({ query: 'keyword', targetWebsite: 'example.test', browserCount: 1 });
+    await tick();
+    assert.equal(sourceOptions.source, 'all-working');
+    assert.equal(sourceOptions.endpoint, 'https://feed.example.test/custom.txt');
+    assert.throws(() => automation.configureProxy({ source: 'proxyscrape-free' }), /Stop SEO Tracker/);
+    automation.stop();
+});
+test('proxy source rejects non-HTTP endpoints and embedded credentials', () => {
+    const { resolveProxySource } = require('../src/main/ProxyManager');
+    assert.throws(() => resolveProxySource('all-working', 'file:///tmp/proxies'), /HTTP or HTTPS/);
+    assert.throws(() => resolveProxySource('all-working', 'https://user:secret@example.test/list'), /must not contain credentials/);
 });
 test('already aborted API request never performs network work', async () => {
     let requests = 0;
@@ -186,7 +224,7 @@ test('IPC listeners/handlers are disposed and destroyed shells are skipped', () 
     const electron = { ipcMain: { handle: (channel, callback) => handlers.set(channel, callback), removeHandler: (channel) => handlers.delete(channel) }, BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => true }] } };
     const { registerIpc } = loadTree(root, electron)('main/ipc/registerIpc.js');
     const dispose = registerIpc({ browserManager: browsers, automationManager: automation });
-    browsers.emit('stateChanged', {}); assert.equal(handlers.size, 8);
+    browsers.emit('stateChanged', {}); assert.equal(handlers.size, 9);
     dispose(); assert.equal(handlers.size, 0); assert.equal(browsers.listenerCount('stateChanged'), 0); assert.equal(automation.listenerCount('seoResult'), 0);
 });
 test('preload coalesces scroll geometry per frame and preserves all Promise settlements', async () => {
@@ -196,21 +234,33 @@ test('preload coalesces scroll geometry per frame and preserves all Promise sett
     assert.equal(calls.length, 0); frame(); await Promise.all([first, second, third]);
     assert.equal(calls.length, 2); assert.equal(calls[0][2].x, 2);
 });
-test('renderer and its UI controls remain byte-for-byte identical to the reference', () => {
+test('renderer carries the DOM brand and concurrent-keyword guidance', () => {
     const manifest = require('../docs/recovery-manifest.json');
-    for (const [file, hash] of Object.entries(manifest.files).filter(([file]) => file.startsWith('dist/renderer/'))) {
+    for (const [file, hash] of Object.entries(manifest.files).filter(([file]) => file.startsWith('dist/renderer/') && file.endsWith('.css'))) {
         const actual = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, file.replace(/^dist\//, '')))).digest('hex');
         assert.equal(actual, hash, file);
     }
+    const html = fs.readFileSync(path.join(root, 'renderer/index.html'), 'utf8');
+    const renderer = fs.readFileSync(path.join(root, 'renderer/assets/index-BZgi7Ish.js'), 'utf8');
+    const providerControls = fs.readFileSync(path.join(root, 'renderer/provider-controls.js'), 'utf8');
+    assert.match(html, /<title>DOM<\/title>/);
+    assert.match(renderer, /DOM SEO Tracker Lite/);
+    assert.match(renderer, /Keywords \(comma separated, simultaneous\)/);
+    assert.match(renderer, /keywords run at the same time across the selected browsers/);
+    assert.doesNotMatch(renderer, /keywords rotate one per cycle/);
+    assert.match(providerControls, /All Working API/);
+    assert.match(providerControls, /ProxyScrape Free API/);
+    assert.match(providerControls, /Proxy API URL \(editable\)/);
+    assert.doesNotMatch(html + renderer + providerControls, new RegExp(['Proxy', 'Desk'].join(''), 'i'));
 });
 test('renderer Keep Alive cancellation releases its sleep and prevents a late link click', async () => {
     const { buildKeepAliveActionScript } = loadTree(root, fakeElectron())('main/BrowserManager.js');
     const timers = new Set(); const window = { innerHeight: 1000, scrollBy() {} };
     const context = require('node:vm').createContext({ window, document: { scrollingElement: { scrollHeight: 10 }, documentElement: { scrollHeight: 10 }, body: { scrollHeight: 10 } }, AbortController, URL, setTimeout: (fn) => { timers.add(fn); return fn; }, clearTimeout: (fn) => timers.delete(fn), performance: { now: () => 0 } });
     const work = require('node:vm').runInContext(buildKeepAliveActionScript(true), context);
-    assert.equal(timers.size, 1); window.__proxyDeskKeepAliveController.abort();
+    assert.equal(timers.size, 1); window.__domKeepAliveController.abort();
     await assert.rejects(work, /cancelled/); assert.equal(timers.size, 0);
-    assert.equal(window.__proxyDeskKeepAliveController, undefined);
+    assert.equal(window.__domKeepAliveController, undefined);
 });
 test('overlapping proxy changes settle in request order without blocking other browsers', async () => {
     const { manager } = await managerFixture();
@@ -227,11 +277,12 @@ test('overlapping proxy changes settle in request order without blocking other b
 });
 test('main quit awaits owned cleanup and disposes handlers before final quit', async () => {
     const electron = fakeElectron(); const handlers = new Map(); const windows = []; const intervals = new Set();
+    const rendererShown = deferred(), quitCompleted = deferred();
     class BrowserWindow extends EventEmitter {
         constructor() { super(); Object.assign(this, electron.window); this.webContents = new EventEmitter(); this.webContents.isDestroyed = () => false; this.webContents.send = () => {}; windows.push(this); }
         async loadFile(file) { this.file = file; }
         async loadURL(url) { this.url = url; }
-        show() { this.shown = true; }
+        show() { this.shown = true; rendererShown.resolve(); }
         static getAllWindows() { return windows; }
     }
     electron.BrowserWindow = BrowserWindow;
@@ -239,18 +290,19 @@ test('main quit awaits owned cleanup and disposes handlers before final quit', a
     electron.session.defaultSession = { setPermissionRequestHandler() {} };
     electron.app.whenReady = () => Promise.resolve();
     let finalQuit = false;
-    electron.app.quit = () => { const event = { prevented: false, preventDefault() { this.prevented = true; } }; electron.app.emit('before-quit', event); if (!event.prevented) finalQuit = true; };
+    electron.app.quit = () => { const event = { prevented: false, preventDefault() { this.prevented = true; } }; electron.app.emit('before-quit', event); if (!event.prevented) { finalQuit = true; quitCompleted.resolve(); } };
     electron.app.exit = () => { throw new Error('Unexpected forced exit'); };
     const testProcess = Object.assign(new EventEmitter(), { env: { NODE_ENV: 'production' }, platform: 'linux', pid: process.pid });
     loadTree(root, electron, { process: testProcess, setInterval: (fn) => { intervals.add(fn); return fn; }, clearInterval: (fn) => intervals.delete(fn) })('main/main.js');
-    for (let i = 0; i < 50 && !windows[0]?.shown; i++) await tick();
-    assert.equal(windows[0].shown, true); assert.ok(windows[0].file.endsWith('renderer/index.html'));
-    assert.equal(handlers.size, 8); assert.equal(electron.views.length, 10);
+    await withTimeout(rendererShown.promise, 2_000, () => { throw new Error('Renderer was not shown after browser preparation.'); });
+    assert.equal(windows[0].shown, true); assert.ok(windows[0].file.endsWith(path.join('renderer', 'index.html')));
+    assert.equal(handlers.size, 9); assert.equal(electron.views.length, 10);
     const pending = deferred(); const activeSession = [...electron.sessions.entries()].find(([name]) => !name.startsWith('persist:'))[1];
     activeSession.clearStorageData = () => pending.promise;
     electron.app.quit(); await tick();
     assert.equal(finalQuit, false); assert.equal(handlers.size, 0); assert.equal(intervals.size, 0);
     assert.equal(electron.views.every((view) => view.webContents.isDestroyed()), true);
-    pending.resolve(); for (let i = 0; i < 50 && !finalQuit; i++) await tick();
+    pending.resolve();
+    await withTimeout(quitCompleted.promise, 2_000, () => { throw new Error('Owned cleanup did not complete before quit.'); });
     assert.equal(finalQuit, true);
 });

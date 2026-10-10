@@ -12,10 +12,12 @@ exports.buildGoogleResultScanScript = buildGoogleResultScanScript;
 exports.buildClickGoogleTargetResultScript = buildClickGoogleTargetResultScript;
 const node_events_1 = require("node:events");
 const electron_1 = require("electron");
+const { existsSync } = require('node:fs');
+const { join } = require('node:path');
 const constants_1 = require("../shared/constants");
 const seo_1 = require("../shared/seo");
 const Logger_1 = require("./Logger");
-const { withTimeout } = require("./runtime");
+const { withTimeout, waitForPreparation, preparationCancelled } = require("./runtime");
 /** Cap on automatic proxy swaps triggered by hitting Google's CAPTCHA page
  * in a row, before giving up and leaving it for a manual "Change Proxy"
  * click — without this, a proxy pool that's mostly Google-flagged (a real
@@ -69,6 +71,11 @@ class BrowserManager extends node_events_1.EventEmitter {
     disposing = new Map();
     disposed = false;
     loginHandler = null;
+    partitionSequence = 0;
+    reusablePartitions = new Map();
+    preparationTimeoutMs = 15_000;
+    legacyCleanupTimeoutMs = 2_000;
+    clearedLegacyPartitions = new Set();
     attachWindow(window) {
         this.window = window;
         this.installGlobalLoginHandler();
@@ -100,9 +107,22 @@ class BrowserManager extends node_events_1.EventEmitter {
         electron_1.app.on('login', this.loginHandler);
     }
     partitionFor(id, _persist) {
-        return buildEphemeralPartitionName(id);
+        const clean = this.reusablePartitions.get(id);
+        if (clean) {
+            this.reusablePartitions.delete(id);
+            return clean;
+        }
+        // Recreated IDs must not reuse a session whose delayed storage cleanup
+        // can still finish after a cancelled/failed preparation.
+        return `${buildEphemeralPartitionName(id)}-${++this.partitionSequence}`;
     }
     async clearLegacyPersistentPartition(id) {
+        if (this.clearedLegacyPartitions.has(id)) return;
+        this.clearedLegacyPartitions.add(id);
+        // Opening a nonexistent persistent partition creates another Chromium
+        // storage/network context. Most IDs (especially newly added browsers)
+        // have no legacy files at all, so avoid that expensive empty migration.
+        if (!existsSync(join(electron_1.app.getPath('sessionData'), 'Partitions', `browser-${id}`))) return;
         const legacy = electron_1.session.fromPartition(`${constants_1.PARTITION_PREFIX}${id}`, { cache: true });
         await Promise.allSettled([legacy.clearStorageData(), legacy.clearCache()]);
     }
@@ -119,19 +139,27 @@ class BrowserManager extends node_events_1.EventEmitter {
         try { await work; } finally { this.creating.delete(id); }
     }
     async createBrowserOwned(id, options) {
-        await this.disposing.get(id);
+        const { signal } = options;
+        if (signal?.aborted) throw preparationCancelled();
+        await waitForPreparation(this.disposing.get(id), this.preparationTimeoutMs, signal,
+            `Browser ${id} cleanup timed out. Stop and retry with fewer browsers.`);
+        if (this.disposed || signal?.aborted) throw preparationCancelled();
         if (this.browsers.has(id))
             return;
-        // Remove cookies/cache/local storage left by older persistent builds
-        // before creating this run's in-memory browser.
-        await this.clearLegacyPersistentPartition(id);
+        // Legacy cleanup is a bounded migration, never a prerequisite for
+        // isolation: the new browser uses a fresh in-memory-only partition.
+        try {
+            await waitForPreparation(this.clearLegacyPersistentPartition(id), this.legacyCleanupTimeoutMs, signal,
+                `Browser ${id} legacy storage cleanup timed out; using a fresh memory session.`);
+        } catch (error) {
+            if (signal?.aborted) throw error;
+            Logger_1.logger.warn('browser', error.message);
+        }
+        if (this.disposed || signal?.aborted) throw preparationCancelled();
         const partition = this.partitionFor(id, options.persistSessions);
         const ses = electron_1.session.fromPartition(partition, { cache: true });
-        // This partition has no "persist:" prefix, so it exists only in memory.
-        // Clear defensively as well: every process launch and every browser id
-        // begins with empty cookies/storage/cache.
-        await Promise.allSettled([ses.clearStorageData(), ses.clearCache()]);
-        if (this.disposed) return;
+        // A unique partition without "persist:" is already empty. Clearing it
+        // immediately would add two native storage waits to every new browser.
         if (options.userAgent)
             ses.setUserAgent(options.userAgent);
         const view = new electron_1.BrowserView({
@@ -161,6 +189,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         const managed = {
             id,
             view,
+            partition,
             session: ses,
             state,
             restartAttempts: 0,
@@ -179,12 +208,22 @@ class BrowserManager extends node_events_1.EventEmitter {
         };
         this.browsers.set(id, managed);
         this.wireEvents(managed, options);
-        this.window?.addBrowserView(view);
         const startUrl = normalizeUrl(options.startPage);
-        await view.webContents.loadURL(startUrl).catch((err) => {
-            Logger_1.logger.warn('browser', `Browser ${id} failed initial load: ${err.message}`);
-            this.updateState(managed, { connectionStatus: 'proxy-failed', errorMessage: err.message });
-        });
+        try {
+            this.window?.addBrowserView(view);
+            await waitForPreparation(view.webContents.loadURL(startUrl), this.preparationTimeoutMs, signal,
+                `Browser ${id} initialization timed out. Try fewer browsers or retry Start.`);
+            if (this.disposed || signal?.aborted) throw preparationCancelled();
+        } catch (error) {
+            // Close a partial renderer immediately. Waiting for its own creating
+            // promise via destroyBrowser here would deadlock.
+            managed.disposed = true;
+            if (this.browsers.get(id) === managed) this.browsers.delete(id);
+            if (this.window && !this.window.isDestroyed()) this.window.removeBrowserView(view);
+            if (!view.webContents.isDestroyed()) view.webContents.close({ waitForBeforeUnload: false });
+            Logger_1.logger.warn('browser', `Browser ${id} failed initial load: ${error.message}`);
+            throw error;
+        }
     }
     wireEvents(managed, options) {
         const { view, id } = managed;
@@ -193,7 +232,13 @@ class BrowserManager extends node_events_1.EventEmitter {
         // request on the page has finished". Modern sites can keep requests open
         // indefinitely; DOM automation must not be blocked by those background
         // requests. As soon as the document DOM exists, the browser is usable.
-        wc.on('did-start-loading', () => this.updateState(managed, { loading: true, connectionStatus: 'loading' }));
+        const readyStatus = () => {
+            const currentUrl = wc.getURL();
+            if (!currentUrl || currentUrl === 'about:blank')
+                return managed.state.proxy ? 'proxy-checking' : 'idle';
+            return 'connected';
+        };
+        wc.on('did-start-loading', () => this.updateState(managed, { loading: true, connectionStatus: 'loading', errorMessage: undefined }));
         wc.on('dom-ready', () => {
             if (extractGoogleBlockContinueUrl(wc.getURL()))
                 return;
@@ -201,7 +246,8 @@ class BrowserManager extends node_events_1.EventEmitter {
                 loading: false,
                 canGoBack: wc.canGoBack(),
                 canGoForward: wc.canGoForward(),
-                connectionStatus: 'connected'
+                connectionStatus: readyStatus(),
+                errorMessage: undefined
             });
         });
         wc.on('did-stop-loading', () => {
@@ -211,7 +257,9 @@ class BrowserManager extends node_events_1.EventEmitter {
                 loading: false,
                 canGoBack: wc.canGoBack(),
                 canGoForward: wc.canGoForward(),
-                connectionStatus: 'connected'
+                connectionStatus: managed.state.connectionStatus === 'proxy-failed'
+                    ? 'proxy-failed'
+                    : readyStatus()
             });
         });
         wc.on('did-navigate', (_e, url) => {
@@ -421,6 +469,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.updateState(managed, {
             proxy,
             connectionStatus: proxy ? 'proxy-checking' : 'no-proxy',
+            errorMessage: undefined,
             keepAliveEnabled: false,
             keepAliveActivity: 'idle'
         });
@@ -435,13 +484,10 @@ class BrowserManager extends node_events_1.EventEmitter {
             proxyBypassRules: '<local>'
         });
         await managed.session.closeAllConnections();
-        if (managed.disposed || this.disposed) return;
-        try {
-            await managed.view.webContents.reload();
-        }
-        catch (err) {
-            Logger_1.logger.warn('browser', `Browser ${id} failed to reload after proxy change: ${err.message}`);
-        }
+        // Do not reload the previous page here. webContents.reload() is
+        // fire-and-forget, so the old about:blank reload could race and win
+        // against the Google load started immediately after assignment.
+        // The automation layer performs the first navigation explicitly.
     }
     async checkIp(id, ipCheckUrl) {
         const managed = this.get(id);
@@ -532,7 +578,24 @@ class BrowserManager extends node_events_1.EventEmitter {
                 wc.removeListener('dom-ready', onDomReady);
             }
             if (loadError && !isGoogleSearchResultsUrl(wc.getURL())) {
+                wc.stop();
+                this.updateState(managed, {
+                    loading: false,
+                    connectionStatus: 'proxy-failed',
+                    errorMessage: loadError
+                });
                 throw new Error(loadError);
+            }
+            const currentUrl = wc.getURL();
+            if (!isGoogleSearchResultsUrl(currentUrl) && !extractGoogleBlockContinueUrl(currentUrl)) {
+                const message = `Google navigation timed out while using this proxy (current page: ${currentUrl || 'none'}).`;
+                wc.stop();
+                this.updateState(managed, {
+                    loading: false,
+                    connectionStatus: 'proxy-failed',
+                    errorMessage: message
+                });
+                throw new Error(message);
             }
         };
         for (let pageIndex = 0; pageIndex < pagesToScan; pageIndex += 1) {
@@ -812,7 +875,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                                 resultPage: pageIndex + 1,
                                 monitoring: true,
                                 interactionStatus: 'click-failed',
-                                error: 'Target website and keyword are visibly present on this Google page, but the clickable result anchor could not be resolved. ProxyDesk will retry this page instead of paginating.',
+                                error: 'Target website and keyword are visibly present on this Google page, but the clickable result anchor could not be resolved. DOM will retry this page instead of paginating.',
                                 keepAliveStarted: false,
                                 ranAt
                             };
@@ -849,7 +912,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                     resultPage: pageIndex + 1,
                     monitoring: true,
                     interactionStatus: 'click-failed',
-                    error: 'Visible target text locked this Google page, but no clickable result was resolved before the observation timeout. ProxyDesk will retry this page.',
+                    error: 'Visible target text locked this Google page, but no clickable result was resolved before the observation timeout. DOM will retry this page.',
                     keepAliveStarted: false,
                     ranAt
                 };
@@ -905,7 +968,7 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     async destroyBrowser(id) {
         if (this.disposing.has(id)) return this.disposing.get(id);
-        await this.creating.get(id);
+        await this.creating.get(id)?.catch(() => {});
         if (this.disposing.has(id)) return this.disposing.get(id);
         const managed = this.browsers.get(id);
         if (!managed)
@@ -926,7 +989,13 @@ class BrowserManager extends node_events_1.EventEmitter {
             managed.session.clearStorageData(),
             managed.session.clearCache(),
             managed.session.setProxy({ mode: 'direct' })
-        ]));
+        ])).then((results) => {
+            // Reuse only after successful cleanup. This keeps native storage
+            // context count bounded during normal shrink/regrowth while a failed
+            // cleanup can never clear data inside the next browsing session.
+            if (!this.disposed && results.every((result) => result.status === 'fulfilled'))
+                this.reusablePartitions.set(id, managed.partition);
+        });
         this.disposing.set(id, cleanup);
         try { await cleanup; } finally { this.disposing.delete(id); }
     }
@@ -1097,7 +1166,7 @@ class BrowserManager extends node_events_1.EventEmitter {
     cancelKeepAliveAction(managed) {
         const wc = managed.view.webContents;
         if (!wc.isDestroyed()) {
-            void wc.executeJavaScript('window.__proxyDeskKeepAliveController?.abort()', true).catch(() => undefined);
+            void wc.executeJavaScript('window.__domKeepAliveController?.abort()', true).catch(() => undefined);
         }
     }
     configureKeepAlive(intervalMs, maxHops, followLinks) {
@@ -1346,9 +1415,9 @@ class BrowserManager extends node_events_1.EventEmitter {
 exports.BrowserManager = BrowserManager;
 function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     return `(async () => {
-    window.__proxyDeskKeepAliveController?.abort();
+    window.__domKeepAliveController?.abort();
     const controller = new AbortController();
-    window.__proxyDeskKeepAliveController = controller;
+    window.__domKeepAliveController = controller;
     const signal = controller.signal;
     try {
     const visited = new Set(${JSON.stringify(visitedUrls)});
@@ -1496,7 +1565,7 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
       return {};
     }
     } finally {
-      if (window.__proxyDeskKeepAliveController === controller) delete window.__proxyDeskKeepAliveController;
+      if (window.__domKeepAliveController === controller) delete window.__domKeepAliveController;
     }
   })()`;
 }
@@ -1518,7 +1587,7 @@ function buildInstallGoogleLiveTargetObserverScript(targetHost, query = '') {
       var target = ${JSON.stringify(targetHost.toLowerCase())};
       var queryText = ${JSON.stringify(query.toLowerCase())};
       var key = target + '|' + queryText;
-      var previous = window.__proxyDeskGoogleWatcher;
+      var previous = window.__domGoogleWatcher;
       if (previous && previous.key === key && previous.state) {
         return Object.assign({}, previous.state);
       }
@@ -1943,7 +2012,7 @@ function buildInstallGoogleLiveTargetObserverScript(targetHost, query = '') {
         if (!state.match) scan();
       }, 120);
 
-      window.__proxyDeskGoogleWatcher = {
+      window.__domGoogleWatcher = {
         key: key,
         state: state,
         click: function() {
@@ -1987,7 +2056,7 @@ function buildInstallGoogleLiveTargetObserverScript(targetHost, query = '') {
 function buildReadGoogleLiveTargetObserverScript() {
     return `(function() {
     try {
-      var watcher = window.__proxyDeskGoogleWatcher;
+      var watcher = window.__domGoogleWatcher;
       if (!watcher || !watcher.state) return null;
       return Object.assign({}, watcher.state);
     } catch (_) {
@@ -1998,7 +2067,7 @@ function buildReadGoogleLiveTargetObserverScript() {
 function buildClickGoogleLiveTargetObserverScript() {
     return `(function() {
     try {
-      var watcher = window.__proxyDeskGoogleWatcher;
+      var watcher = window.__domGoogleWatcher;
       return Boolean(watcher && watcher.click && watcher.click());
     } catch (_) {
       return false;
@@ -2008,9 +2077,9 @@ function buildClickGoogleLiveTargetObserverScript() {
 function buildStopGoogleLiveTargetObserverScript() {
     return `(function() {
     try {
-      var watcher = window.__proxyDeskGoogleWatcher;
+      var watcher = window.__domGoogleWatcher;
       if (watcher && watcher.stop) watcher.stop();
-      delete window.__proxyDeskGoogleWatcher;
+      delete window.__domGoogleWatcher;
       return true;
     } catch (_) {
       return false;

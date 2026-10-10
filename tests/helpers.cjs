@@ -8,7 +8,7 @@ function loadTree(root, electron, globals = {}) {
     function load(file) {
         if (!path.extname(file)) file = fs.existsSync(`${file}.js`) ? `${file}.js` : path.join(file, 'index.js');
         if (cache.has(file)) return cache.get(file).exports;
-        if (file.endsWith('/Logger.js')) return { logger: { info() {}, warn() {}, error() {}, close: async () => {} } };
+        if (path.basename(file) === 'Logger.js') return { logger: { info() {}, warn() {}, error() {}, close: async () => {} } };
         const module = { exports: {} }; cache.set(file, module);
         const context = vm.createContext({ console, process, URL, AbortController, Buffer, setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, queueMicrotask, ...globals });
         const fn = vm.runInContext(`(function(require,module,exports,__dirname){${fs.readFileSync(file, 'utf8')}\n})`, context, { filename: file });
@@ -20,6 +20,7 @@ function loadTree(root, electron, globals = {}) {
 function fakeElectron() {
     let nextId = 1;
     const app = new EventEmitter();
+    app.getPath = () => path.join(require('node:os').tmpdir(), 'dom-test-no-legacy-partitions');
     const views = [];
     const sessions = new Map();
     class WebContents extends EventEmitter {

@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const directory = path.resolve(__dirname, '../release-linux');
 const artifact = fs.readdirSync(directory).find((file) => file.endsWith('.AppImage'));
 if (!artifact) throw new Error('Missing AppImage');
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'proxydesk-appimage-'));
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'dom-appimage-'));
 fs.mkdirSync('.measurements', { recursive: true });
 const log = fs.createWriteStream('.measurements/appimage-smoke.log');
 const child = spawn('xvfb-run', ['-a', path.join(directory, artifact), '--disable-gpu', '--no-sandbox', `--user-data-dir=${profile}`], { env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: '1' }, detached: true });
@@ -18,7 +18,7 @@ function mainPid(pid) {
     try {
         const executable = fs.readlinkSync(`/proc/${pid}/exe`);
         const args = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0');
-        if (path.basename(executable) === 'proxydesk' && !args.some((arg) => arg.startsWith('--type='))) return pid;
+        if (path.basename(executable) === 'dom' && !args.some((arg) => arg.startsWith('--type='))) return pid;
         children = fs.readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim().split(/\s+/).filter(Boolean).map(Number);
     } catch { return null; }
     for (const descendant of children) { const found = mainPid(descendant); if (found) return found; }
@@ -31,7 +31,7 @@ const forced = setTimeout(() => { failed = true; stop('SIGKILL'); }, 55000);
 for (const stream of [child.stdout, child.stderr]) stream.on('data', (data) => {
     log.write(data); process.stdout.write(data);
     if (data.toString().includes('FATAL:')) failed = true;
-    if (!ready && data.toString().includes('ProxyDesk SEO Tracker Lite ready')) {
+    if (!ready && data.toString().includes('DOM SEO Tracker Lite ready')) {
         ready = true;
         setTimeout(() => {
             const pid = mainPid(child.pid);

@@ -1,0 +1,89 @@
+name: DOM v0.5.7 Windows build and release
+
+on:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - name: Check the bundled Electron Node runtime
+        run: node scripts/check-bundled-runtime.cjs
+      - name: Build Windows installer from tracked source
+        run: npm run package:windows
+      - name: Check production archive
+        run: node scripts/check-package.cjs release-windows/win-unpacked/resources/app.asar
+      - name: Smoke test unpacked Windows application
+        run: node scripts/smoke-runtime.cjs release-windows/win-unpacked/DOM.exe
+      - name: Install into a clean directory
+        shell: pwsh
+        run: |
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.7-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.7-installed'
+          $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
+          $installedExecutable = Join-Path $installDirectory 'DOM.exe'
+          if (-not (Test-Path $installedExecutable)) { throw "Installed executable not found at $installedExecutable" }
+          "DOM_INSTALLED_EXE=$installedExecutable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Smoke test installed Windows application
+        shell: pwsh
+        run: node scripts/smoke-runtime.cjs "$env:DOM_INSTALLED_EXE"
+      - name: Create SHA-256 checksum
+        shell: pwsh
+        run: |
+          $installer = Get-Item 'release-windows/DOM-v0.5.7-Windows-x64-Setup.exe'
+          $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.7-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DOM-v0.5.7-Windows-x64
+          path: |
+            release-windows/DOM-v0.5.7-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.7-Windows-x64-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-windows:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: DOM-v0.5.7-Windows-x64
+          path: release-assets
+      - name: Publish verified Windows release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$(node -p 'require("./package.json").windowsRelease')"
+          test "$GITHUB_REF_NAME" = "$TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.7 for Windows" --notes "DOM v0.5.7 fixes startup hangs when the browser count is increased. New browsers are initialized two at a time with visible progress, cancellable startup and bounded native waits. Fresh memory partitions avoid redundant storage clearing and stale cleanup affecting a retry. Browsing, target clicks and Keep Alive retain their existing behavior. The unpacked and freshly installed Windows applications are tested growing from 10 to 20 browsers, shrinking and regrowing, stopping a larger startup and restarting afterwards. SHA-256 verification is included."
+          fi
