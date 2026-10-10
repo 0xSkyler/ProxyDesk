@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const { performance } = require('node:perf_hooks');
 const { _electron } = require('playwright-core');
 const asar = require('@electron/asar');
-const { withinDeadline, waitForAutomation } = require('./benchmark-state.cjs');
+const { withinDeadline, waitForAutomation, waitForRenderer } = require('./benchmark-state.cjs');
 const [runtimeArg, sourceArg, outputArg, durationArg = '60', countArg = '10'] = process.argv.slice(2);
 if (!runtimeArg || !sourceArg || !outputArg) throw new Error('Usage: benchmark.cjs <linux-unpacked> <source-app> <output.json> [active seconds=60] [browsers=10]');
 const runtime = path.resolve(runtimeArg), source = path.resolve(sourceArg), output = path.resolve(outputArg);
@@ -67,7 +67,7 @@ function processStart(pid) {
         const launchStart = performance.now();
         application = await _electron.launch({ executablePath: executable, args: ['--no-sandbox', '--disable-gpu', '--host-resolver-rules=MAP fixture.local 127.0.0.1', `--user-data-dir=${temporary}/profile`], env: { ...process.env, NODE_ENV: 'production', DOM_FIXTURE_API: `http://127.0.0.1:${fixturePort}/proxies`, DOM_FIXTURE_SITE: 'http://fixture.local' }, timeout: 60000 });
         application.process().once('exit', () => { exitObserved = true; });
-        const page = await application.firstWindow();
+        const page = await waitForRenderer(application);
         await page.getByRole('heading', { name: `${metadata.productName} SEO Tracker Lite`, exact: true }).waitFor();
         await page.waitForFunction(() => document.querySelectorAll('.browser-card').length === 10);
         report.startupMs = performance.now() - launchStart; report.checks.rendererLoaded = true;

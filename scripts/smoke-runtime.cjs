@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { waitForAutomation } = require('./benchmark-state.cjs');
+const { waitForAutomation, waitForRenderer } = require('./benchmark-state.cjs');
 const profile = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dom-smoke-'));
 const target = path.resolve(process.argv[2]);
 if (target.endsWith('.AppImage')) fs.chmodSync(target, 0o755);
@@ -28,7 +28,7 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
     try {
         app = await _electron.launch({ executablePath: target, chromiumSandbox: !disableSandboxForLinuxTestRunner, args: [...(disableSandboxForLinuxTestRunner ? ['--no-sandbox'] : []), '--disable-gpu', `--user-data-dir=${profile}`], env: { ...process.env, NODE_ENV: 'production', APPIMAGE_EXTRACT_AND_RUN: '1' }, timeout: 60000 });
         if (sandboxEnabled) assert.equal(await app.evaluate(({ app }) => app.commandLine.hasSwitch('no-sandbox')), false);
-        const page = await app.firstWindow();
+        const page = await waitForRenderer(app);
         await page.getByRole('heading', { name: 'DOM SEO Tracker Lite', exact: true }).waitFor();
         await page.waitForFunction(() => document.querySelectorAll('.browser-card').length === 10);
         const source = page.getByLabel('Proxy source', { exact: true });
