@@ -1,10 +1,31 @@
-# DOM v0.5.7
+# DOM v0.5.8
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
 React renderer is a committed production bundle; original JSX/TS and source maps
 were not present in the installer. This is a deterministic recovered application
 tree, not a claim that the original development sources were recovered.
+
+## Progressive result recognition
+
+DOM watches Google result mutations from a sandboxed preload at document start.
+It opens a detected target while HTML, images or other requests are still loading;
+full-page completion and the **Ready** label are not prerequisites. Browser cards
+show **Waiting for results**, **Scanning results** and **Opening target**.
+
+One shared recognizer checks result-title links, sibling domain citations,
+Google redirect URLs, accessible/mobile headings and Unicode formatting. The
+actual destination must belong to the target domain or a subdomain. Keyword
+overlap ranks candidates rather than rejecting a target whose title/snippet
+does not contain every query word. Ads, hidden results, lookalike domains and
+domain mentions in another site's snippet are excluded. An unresolved target
+citation holds the current page; incomplete streamed HTML is retried before
+pagination. Recognition uses DOM text and links without adding an OCR model.
+
+Native Electron fixtures reproduce the reported result layout, delayed first-page
+results, loads that never complete, offscreen links and cancellation. Run
+`node scripts/smoke-google-recognition.cjs` from a graphical desktop (or under
+Xvfb). Pass a packaged executable to validate the shipped preload and recognizer.
 
 ## Browser startup
 
@@ -27,9 +48,8 @@ Enter comma-separated keywords and select at least one browser for each keyword.
 Every cycle assigns the keywords across the existing browser fleet in order and
 runs them at the same time. For example, three browsers with `first, second`
 run `first`, `second`, and `first`. Rotation keeps the same assignment and only
-refreshes the proxies and browser sessions. All existing target matching, Google
-challenge handling, result opening, Keep Alive, proxy fetching and controls are
-unchanged.
+refreshes the proxies and browser sessions. Google challenge handling, Keep Alive,
+proxy fetching and browser controls retain the recovered workflow.
 
 ## Proxy sources
 
@@ -48,12 +68,13 @@ new portion of a stable provider list instead of reusing its first entries.
 
 ### Windows download
 
-[Download DOM v0.5.7 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.7/DOM-v0.5.7-Windows-x64-Setup.exe)
+[Download DOM v0.5.8 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.8/DOM-v0.5.8-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
 applications, verifies growth from 10 to 20 browsers, shrink/regrowth, startup
-cancellation and recovery, the DOM UI and input validation, and publishes a SHA-256
+cancellation and recovery, result recognition and opening before page completion,
+the DOM UI and input validation, and publishes a SHA-256
 checksum with the release. The installer is not Authenticode-signed, so Windows
 SmartScreen may ask for confirmation on first launch.
 
@@ -65,7 +86,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.7-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.8-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -88,14 +109,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.7-linux-x86_64.AppImage
-./DOM-v0.5.7-linux-x86_64.AppImage
+chmod +x DOM-v0.5.8-linux-x86_64.AppImage
+./DOM-v0.5.8-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.7-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.8-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -110,7 +131,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.7-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.8-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -126,7 +147,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.7-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.8-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -150,7 +171,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch CI publishes the immutable `v0.5.7-linux.1` release only after native
+Main-branch CI publishes the immutable `v0.5.8-linux.1` release only after native
 build, packaged smoke tests and original/optimized fixture comparison succeed.
 The original Windows release is retained. The installer checks host prerequisites;
 the target VPS's display, sandbox configuration and live proxy/search behavior

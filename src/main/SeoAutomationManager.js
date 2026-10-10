@@ -399,7 +399,10 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             if (result.status === 'matched' &&
                 result.interactionStatus === 'opened' &&
                 result.matchedUrl) {
-                this.browserManager.startControlledKeepAlive(browserId, interactionHost);
+                const landedUrl = result.landedUrl || result.matchedUrl;
+                const keepAliveHost = (0, seo_1.hostMatchesTarget)(landedUrl, interactionHost)
+                    ? (0, seo_1.normalizeTargetHost)(landedUrl) : interactionHost;
+                this.browserManager.startControlledKeepAlive(browserId, keepAliveHost);
                 this.emit('seoResult', {
                     cycleNumber,
                     result: {

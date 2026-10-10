@@ -10,7 +10,7 @@ function loadTree(root, electron, globals = {}) {
         if (cache.has(file)) return cache.get(file).exports;
         if (path.basename(file) === 'Logger.js') return { logger: { info() {}, warn() {}, error() {}, close: async () => {} } };
         const module = { exports: {} }; cache.set(file, module);
-        const context = vm.createContext({ console, process, URL, AbortController, Buffer, setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, queueMicrotask, ...globals });
+        const context = vm.createContext({ console, process, URL, URLSearchParams, AbortController, Buffer, setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, queueMicrotask, ...globals });
         const fn = vm.runInContext(`(function(require,module,exports,__dirname){${fs.readFileSync(file, 'utf8')}\n})`, context, { filename: file });
         fn((name) => name === 'electron' ? electron : name.startsWith('.') ? load(path.resolve(path.dirname(file), name)) : require(name), module, module.exports, path.dirname(file));
         return module.exports;
@@ -38,6 +38,7 @@ function fakeElectron() {
         setWindowOpenHandler(handler) { this.openHandler = handler; }
         reload() { this.reloaded = true; }
         executeJavaScript() { return Promise.resolve({}); }
+        send(channel, ...args) { this.sent = [...(this.sent || []), { channel, args }]; }
     }
     class BrowserView {
         constructor(options) { this.options = options; this.webContents = new WebContents(); views.push(this); }

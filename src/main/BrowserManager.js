@@ -16,6 +16,7 @@ const { existsSync } = require('node:fs');
 const { join } = require('node:path');
 const constants_1 = require("../shared/constants");
 const seo_1 = require("../shared/seo");
+const { recognizeGoogleResults, installGoogleResultObserver } = require('../preload/google-results');
 const Logger_1 = require("./Logger");
 const { withTimeout, waitForPreparation, preparationCancelled } = require("./runtime");
 /** Cap on automatic proxy swaps triggered by hitting Google's CAPTCHA page
@@ -165,6 +166,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         const view = new electron_1.BrowserView({
             webPreferences: {
                 session: ses,
+                preload: join(__dirname, '../preload/google-results.js'),
                 contextIsolation: true,
                 sandbox: true,
                 nodeIntegration: false,
@@ -236,8 +238,31 @@ class BrowserManager extends node_events_1.EventEmitter {
             const currentUrl = wc.getURL();
             if (!currentUrl || currentUrl === 'about:blank')
                 return managed.state.proxy ? 'proxy-checking' : 'idle';
+            if (managed.googleConfig && isGoogleSearchResultsUrl(currentUrl) && !managed.googleState?.observedResults)
+                return 'loading';
             return 'connected';
         };
+        wc.on('ipc-message', (event, channel, payload) => {
+            // Recognition runs in an isolated, sandboxed preload. Only accept
+            // messages from this browser's current main frame and search cycle.
+            if (event.senderFrame !== wc.mainFrame) return;
+            if (channel === 'dom:google-preload-ready') {
+                event.reply('dom:google-config', managed.googleConfig || null);
+                return;
+            }
+            const config = managed.googleConfig;
+            if (channel !== 'dom:google-state' || !config || !payload ||
+                payload.navigation !== config.navigation || payload.token !== config.token ||
+                !isGoogleSearchResultsUrl(payload.documentUrl)) return;
+            const url = new URL(payload.documentUrl);
+            if (url.searchParams.get('q') !== config.query || (url.searchParams.get('start') || '0') !== config.start) return;
+            if (config.token != null && !this.isMeasurementSessionCurrent(id, config.token)) return;
+            managed.googleState = payload.state;
+            if (payload.state?.observedResults) this.updateState(managed, {
+                loading: false, connectionStatus: 'connected',
+                googleSearchActivity: payload.state.match ? 'opening-target' : 'scanning-results'
+            });
+        });
         wc.on('did-start-loading', () => this.updateState(managed, { loading: true, connectionStatus: 'loading', errorMessage: undefined }));
         wc.on('dom-ready', () => {
             if (extractGoogleBlockContinueUrl(wc.getURL()))
@@ -516,9 +541,15 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.measurementTokens.set(id, (this.measurementTokens.get(id) ?? 0) + 1);
         const managed = this.browsers.get(id);
         if (managed && !managed.view.webContents.isDestroyed()) {
+            this.stopGoogleRecognition(managed);
             managed.view.webContents.stop();
-            void managed.view.webContents.executeJavaScript(buildStopGoogleLiveTargetObserverScript(), true).catch(() => undefined);
         }
+    }
+    stopGoogleRecognition(managed) {
+        managed.googleConfig = null;
+        managed.googleState = null;
+        if (managed.state.googleSearchActivity) this.updateState(managed, { googleSearchActivity: undefined });
+        if (!managed.view.webContents.isDestroyed()) managed.view.webContents.send('dom:google-config', null);
     }
     isMeasurementSessionCurrent(id, token) {
         return !this.disposed && this.browsers.has(id) && this.measurementTokens.get(id) === token;
@@ -545,12 +576,12 @@ class BrowserManager extends node_events_1.EventEmitter {
          * completion is never a prerequisite.
          */
         const loadSearchDom = async (url) => {
-            let ready = false;
-            const onDomReady = () => {
-                if (isGoogleSearchResultsUrl(wc.getURL()))
-                    ready = true;
-            };
-            wc.on('dom-ready', onDomReady);
+            const parsed = new URL(url);
+            managed.googleState = null;
+            managed.googleConfig = { target: targetHost, query: parsed.searchParams.get('q') || '', start: parsed.searchParams.get('start') || '0',
+                token: measurementToken, navigation: (managed.googleNavigation || 0) + 1 };
+            managed.googleNavigation = managed.googleConfig.navigation;
+            this.updateState(managed, { googleSearchActivity: 'waiting-results' });
             let loadError = null;
             void wc.loadURL(url).catch((err) => {
                 const message = err.message || String(err);
@@ -558,26 +589,14 @@ class BrowserManager extends node_events_1.EventEmitter {
                     loadError = message;
             });
             const deadline = Date.now() + 5_000;
-            try {
-                while (Date.now() < deadline) {
-                    const current = wc.getURL();
-                    if (extractGoogleBlockContinueUrl(current))
-                        return;
-                    if (ready || isGoogleSearchResultsUrl(current)) {
-                        // A tiny paint grace is enough to begin text recognition. The
-                        // scanner below keeps watching as more result blocks arrive.
-                        await delay(60);
-                        return;
-                    }
-                    if (loadError)
-                        break;
-                    await delay(25);
-                }
+            while (Date.now() < deadline) {
+                if (measurementToken != null && !this.isMeasurementSessionCurrent(id, measurementToken)) return;
+                const current = wc.getURL();
+                if (extractGoogleBlockContinueUrl(current) || managed.googleState) return;
+                if (loadError) break;
+                await delay(25);
             }
-            finally {
-                wc.removeListener('dom-ready', onDomReady);
-            }
-            if (loadError && !isGoogleSearchResultsUrl(wc.getURL())) {
+            if (loadError && !managed.googleState) {
                 wc.stop();
                 this.updateState(managed, {
                     loading: false,
@@ -633,17 +652,9 @@ class BrowserManager extends node_events_1.EventEmitter {
                     ranAt
                 };
             }
-            // Install one live watcher inside the CURRENT Google page. It observes
-            // DOM mutations as result cards render and locks the page immediately
-            // when keyword + target host appear together. Pagination is forbidden
-            // while this watcher is active.
-            let watcher = null;
-            try {
-                watcher = (await wc.executeJavaScript(buildInstallGoogleLiveTargetObserverScript(targetHost, query), true));
-            }
-            catch {
-                watcher = null;
-            }
+            // The preload installed the watcher at document start. IPC delivers
+            // progressive result state without executeJavaScript's load wait.
+            let watcher = managed.googleState;
             let pageMaxObserved = watcher?.observedResults ?? 0;
             let lastSignature = watcher?.signature ?? '';
             let stableScans = watcher?.signature ? 1 : 0;
@@ -654,7 +665,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             while (Date.now() < watchDeadline) {
                 if (measurementToken != null &&
                     !this.isMeasurementSessionCurrent(id, measurementToken)) {
-                    void wc.executeJavaScript(buildStopGoogleLiveTargetObserverScript(), true).catch(() => undefined);
+                    this.stopGoogleRecognition(managed);
                     return {
                         browserId: id,
                         status: 'monitoring',
@@ -666,7 +677,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 }
                 const activeUrl = wc.getURL();
                 if (extractGoogleBlockContinueUrl(activeUrl)) {
-                    void wc.executeJavaScript(buildStopGoogleLiveTargetObserverScript(), true).catch(() => undefined);
+                    this.stopGoogleRecognition(managed);
                     return {
                         browserId: id,
                         status: 'paused',
@@ -680,11 +691,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 // Google. Treat an exact target-host landing as success immediately.
                 if (!isGoogleSearchResultsUrl(activeUrl)) {
                     try {
-                        const landedHost = new URL(activeUrl).hostname
-                            .toLowerCase()
-                            .replace(/^www\./, '')
-                            .replace(/\.$/, '');
-                        if (landedHost === targetHost) {
+                        if ((0, seo_1.hostMatchesTarget)(activeUrl, targetHost)) {
                             totalScanned += pageMaxObserved;
                             return {
                                 browserId: id,
@@ -706,18 +713,9 @@ class BrowserManager extends node_events_1.EventEmitter {
                         // Transitional navigation URL; keep observing.
                     }
                 }
-                try {
-                    const state = await withTimeout(
-                        wc.executeJavaScript(buildReadGoogleLiveTargetObserverScript(), true),
-                        220, () => null);
-                    if (state)
-                        watcher = state;
-                }
-                catch {
-                    // Google may still be committing the results document.
-                }
+                if (managed.googleState) watcher = managed.googleState;
                 if (watcher?.blocked) {
-                    void wc.executeJavaScript(buildStopGoogleLiveTargetObserverScript(), true).catch(() => undefined);
+                    this.stopGoogleRecognition(managed);
                     return {
                         browserId: id,
                         status: 'paused',
@@ -733,7 +731,10 @@ class BrowserManager extends node_events_1.EventEmitter {
                         // Match detection and first click are deliberately coupled to the
                         // same page watcher so Google cannot paginate between them.
                         const matched = watcher.match;
-                        let clickResult = false;
+                        if (!(0, seo_1.hostMatchesTarget)(matched.url, targetHost)) {
+                            this.stopGoogleRecognition(managed);
+                            return { browserId: id, status: 'error', error: 'Detected result destination did not match the target website.', ranAt };
+                        }
                         if (matched.clickPoint &&
                             Number.isFinite(matched.clickPoint.x) &&
                             Number.isFinite(matched.clickPoint.y)) {
@@ -743,17 +744,17 @@ class BrowserManager extends node_events_1.EventEmitter {
                                 wc.sendInputEvent({ type: 'mouseMove', x, y });
                                 wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
                                 wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
-                                clickResult = true;
                             }
                             catch {
-                                clickResult = false;
+                                // The isolated preload will activate the anchor.
                             }
-                            await delay(450);
+                            await delay(100);
+                        }
+                        if (measurementToken != null && !this.isMeasurementSessionCurrent(id, measurementToken)) {
+                            return { browserId: id, status: 'monitoring', landedUrl: wc.getURL(), monitoring: true, ranAt };
                         }
                         if (isGoogleSearchResultsUrl(wc.getURL())) {
-                            clickResult = Boolean(await withTimeout(
-                                wc.executeJavaScript(buildClickGoogleLiveTargetObserverScript(), true),
-                                350, () => false).catch(() => false)) || clickResult;
+                            wc.send('dom:google-click', managed.googleConfig.navigation);
                         }
                         const navigationDeadline = Date.now() + 3_500;
                         while (Date.now() < navigationDeadline) {
@@ -770,11 +771,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                             }
                             try {
                                 const current = wc.getURL();
-                                const host = new URL(current).hostname
-                                    .toLowerCase()
-                                    .replace(/^www\./, '')
-                                    .replace(/\.$/, '');
-                                if (host === targetHost) {
+                                if ((0, seo_1.hostMatchesTarget)(current, targetHost)) {
                                     totalScanned += pageMaxObserved;
                                     return {
                                         browserId: id,
@@ -800,24 +797,18 @@ class BrowserManager extends node_events_1.EventEmitter {
                         // DOM/native activation can be ignored by some Google result
                         // layouts. The final fallback uses ONLY the exact URL captured
                         // from the matched Google card; no destination is constructed.
-                        if (clickResult !== false &&
-                            isGoogleSearchResultsUrl(wc.getURL()) &&
+                        if (isGoogleSearchResultsUrl(wc.getURL()) &&
                             (!measurementToken || this.isMeasurementSessionCurrent(id, measurementToken))) {
-                            await wc.loadURL(matched.url).catch(() => undefined);
-                        }
-                        else if (isGoogleSearchResultsUrl(wc.getURL()) &&
-                            (!measurementToken || this.isMeasurementSessionCurrent(id, measurementToken))) {
-                            await wc.loadURL(matched.url).catch(() => undefined);
+                            void wc.loadURL(matched.url).catch(() => undefined);
                         }
                         const fallbackDeadline = Date.now() + 5_000;
                         while (Date.now() < fallbackDeadline) {
+                            if (measurementToken != null && !this.isMeasurementSessionCurrent(id, measurementToken)) {
+                                return { browserId: id, status: 'monitoring', landedUrl: wc.getURL(), monitoring: true, ranAt };
+                            }
                             try {
                                 const current = wc.getURL();
-                                const host = new URL(current).hostname
-                                    .toLowerCase()
-                                    .replace(/^www\./, '')
-                                    .replace(/\.$/, '');
-                                if (host === targetHost) {
+                                if ((0, seo_1.hostMatchesTarget)(current, targetHost)) {
                                     totalScanned += pageMaxObserved;
                                     return {
                                         browserId: id,
@@ -864,7 +855,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                         // text but its clickable anchor remains unresolved, do NOT move
                         // to page 2; report the failure so the same page/session retries.
                         if (!watcher.match && Date.now() - targetTextSeenAt >= 3_000) {
-                            void wc.executeJavaScript(buildStopGoogleLiveTargetObserverScript(), true).catch(() => undefined);
+                            this.stopGoogleRecognition(managed);
                             totalScanned += pageMaxObserved;
                             return {
                                 browserId: id,
@@ -875,7 +866,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                                 resultPage: pageIndex + 1,
                                 monitoring: true,
                                 interactionStatus: 'click-failed',
-                                error: 'Target website and keyword are visibly present on this Google page, but the clickable result anchor could not be resolved. DOM will retry this page instead of paginating.',
+                                error: 'The target domain is visible in a result, but its destination link is not yet resolved. DOM will retry this page instead of paginating.',
                                 keepAliveStarted: false,
                                 ranAt
                             };
@@ -893,7 +884,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                         }
                         // Pagination is allowed only for a stable page where no target
                         // text has ever been observed.
-                        if (stableScans >= 12 && Date.now() - firstObservedAt >= 2_500) {
+                        if (watcher.documentParsed && stableScans >= 12 && Date.now() - firstObservedAt >= 2_500) {
                             break;
                         }
                     }
@@ -901,7 +892,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 await delay(100);
             }
             totalScanned += pageMaxObserved;
-            void wc.executeJavaScript(buildStopGoogleLiveTargetObserverScript(), true).catch(() => undefined);
+            this.stopGoogleRecognition(managed);
             if (watcher?.targetTextSeen) {
                 return {
                     browserId: id,
@@ -916,6 +907,13 @@ class BrowserManager extends node_events_1.EventEmitter {
                     keepAliveStarted: false,
                     ranAt
                 };
+            }
+            if (!watcher?.documentParsed) {
+                // Incomplete streamed HTML may still contain a first-page
+                // target. Retry this page rather than silently skipping it.
+                return { browserId: id, status: 'monitoring', landedUrl: wc.getURL(),
+                    resultsScanned: totalScanned, monitoring: true,
+                    error: 'Google results are still rendering; retrying without advancing the page.', ranAt };
             }
             if (wc.isLoading())
                 wc.stop();
@@ -1090,7 +1088,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             // URL belongs to the configured controlled test environment.
             if (isGoogleSearchResultsUrl(wc.getURL()) &&
                 this.isMeasurementSessionCurrent(id, measurementToken)) {
-                await wc.loadURL(expectedUrl).catch(() => undefined);
+                void wc.loadURL(expectedUrl).catch(() => undefined);
                 const fallbackDeadline = Date.now() + 6_000;
                 while (Date.now() < fallbackDeadline) {
                     if (!this.isMeasurementSessionCurrent(id, measurementToken))
@@ -1583,944 +1581,36 @@ function isGoogleSearchResultsUrl(url) {
 }
 function buildInstallGoogleLiveTargetObserverScript(targetHost, query = '') {
     return `(function() {
-    try {
-      var target = ${JSON.stringify(targetHost.toLowerCase())};
-      var queryText = ${JSON.stringify(query.toLowerCase())};
-      var key = target + '|' + queryText;
-      var previous = window.__domGoogleWatcher;
-      if (previous && previous.key === key && previous.state) {
-        return Object.assign({}, previous.state);
-      }
-      if (previous && previous.stop) previous.stop();
-
-      var state = {
-        blocked: false,
-        observedResults: 0,
-        signature: '',
-        targetTextSeen: false,
-        candidateText: ''
-      };
-      var matchedAnchor = null;
-
-      function normalizeWords(text) {
-        return String(text || '')
-          .toLowerCase()
-          .replace(/www\\./g, '')
-          .replace(/[^a-z0-9]+/g, ' ')
-          .trim()
-          .replace(/\\s+/g, ' ');
-      }
-
-      var tokens = normalizeWords(queryText)
-        .split(' ')
-        .filter(function(token) { return token.length >= 2; });
-
-      function keywordMatches(text) {
-        if (!tokens.length) return true;
-        var normalized = ' ' + normalizeWords(text) + ' ';
-        return tokens.every(function(token) {
-          return normalized.indexOf(' ' + token + ' ') !== -1;
-        });
-      }
-
-      function normalizeHost(host) {
-        return String(host || '').toLowerCase().replace(/^www\\./, '').replace(/\\.$/, '');
-      }
-
-      function unwrap(href) {
-        try {
-          var resolved = new URL(href, location.href);
-          if (/(^|\\.)google\\.[a-z.]+$/i.test(resolved.hostname)) {
-            var redirected =
-              resolved.searchParams.get('url') ||
-              resolved.searchParams.get('q') ||
-              resolved.searchParams.get('adurl') ||
-              resolved.searchParams.get('imgurl');
-            if (redirected) return redirected;
-          }
-          return resolved.href;
-        } catch (_) {
-          return href;
-        }
-      }
-
-      function destinationHost(url) {
-        try {
-          return normalizeHost(new URL(url, location.href).hostname);
-        } catch (_) {
-          return '';
-        }
-      }
-
-      function mentionsTarget(text) {
-        var normalized = normalizeWords(text).replace(/\\s+/g, '');
-        var targetWords = normalizeWords(target).replace(/\\s+/g, '');
-        return normalized.indexOf(targetWords) !== -1;
-      }
-
-      function elementRect(element) {
-        if (!element || !element.getBoundingClientRect) return null;
-        try {
-          var rect = element.getBoundingClientRect();
-          if (!rect || rect.width <= 2 || rect.height <= 2) return null;
-          return rect;
-        } catch (_) {
-          return null;
-        }
-      }
-
-      function absoluteHref(anchor) {
-        try {
-          var raw =
-            anchor.getAttribute('href') ||
-            anchor.getAttribute('data-href') ||
-            anchor.getAttribute('data-url') ||
-            anchor.href ||
-            '';
-          return new URL(raw, location.href).href;
-        } catch (_) {
-          return '';
-        }
-      }
-
-      function directDestination(anchor) {
-        var raw =
-          anchor.getAttribute('href') ||
-          anchor.getAttribute('data-href') ||
-          anchor.getAttribute('data-url') ||
-          anchor.href ||
-          '';
-        var unwrapped = unwrap(raw);
-        return {
-          raw: absoluteHref(anchor),
-          unwrapped: unwrapped,
-          host: destinationHost(unwrapped)
-        };
-      }
-
-      function chooseAnchor(block) {
-        if (!block || !block.querySelectorAll) return null;
-        var anchors = Array.prototype.slice.call(
-          block.querySelectorAll('a[href],a[data-href],a[data-url]')
-        );
-        var best = null;
-
-        anchors.forEach(function(anchor) {
-          try {
-            var heading = anchor.querySelector && anchor.querySelector('h3,h2,h1');
-            var title = (
-              (heading && heading.innerText) ||
-              anchor.getAttribute('aria-label') ||
-              anchor.innerText ||
-              ''
-            ).trim();
-            var info = directDestination(anchor);
-            var rect = elementRect(anchor);
-
-            var score = 0;
-            if (heading) score += 500;
-            if (keywordMatches(title)) score += 450;
-            if (info.host === target) score += 350;
-            if (mentionsTarget(title)) score += 120;
-            if (title.length >= 8) score += 80;
-            if (rect) score += 40;
-            if (!info.raw) score -= 250;
-
-            if (!best || score > best.score) {
-              best = {
-                anchor: anchor,
-                title: title,
-                score: score,
-                rawUrl: info.raw,
-                directUrl: info.unwrapped,
-                directHost: info.host,
-                rect: rect
-              };
-            }
-          } catch (_) {
-            // Ignore malformed anchors inside an otherwise valid visual card.
-          }
-        });
-
-        return best;
-      }
-
-      function textBlockCandidate(root) {
-        if (!root || !root.querySelectorAll) return null;
-
-        // Recognition starts from rendered host/domain text, independent of
-        // the anchor's current URL shape.
-        var nodes = Array.prototype.slice.call(
-          root.querySelectorAll('cite,span,div,h3,h2,a')
-        );
-        var bestBlock = null;
-
-        for (var i = 0; i < nodes.length; i += 1) {
-          var seed = nodes[i];
-          var seedText = ((seed && seed.innerText) || '').trim();
-          if (!mentionsTarget(seedText)) continue;
-
-          var card = seed;
-          for (var depth = 0; card && depth < 11; depth += 1, card = card.parentElement) {
-            var cardText = ((card && card.innerText) || '').trim();
-            if (
-              cardText.length < 8 ||
-              cardText.length > 5000 ||
-              !mentionsTarget(cardText) ||
-              !keywordMatches(cardText)
-            ) {
-              continue;
-            }
-            if (/\\bSponsored\\b/i.test(cardText.slice(0, 320))) break;
-
-            state.targetTextSeen = true;
-            if (!state.candidateText || cardText.length < state.candidateText.length) {
-              state.candidateText = cardText.slice(0, 500);
-            }
-
-            var chosen = chooseAnchor(card);
-            if (!chosen) continue;
-
-            var blockScore =
-              chosen.score +
-              Math.max(0, 500 - Math.min(cardText.length, 500)) -
-              depth * 5;
-
-            if (!bestBlock || blockScore > bestBlock.score) {
-              bestBlock = {
-                score: blockScore,
-                cardText: cardText,
-                chosen: chosen
-              };
-            }
-
-            if (
-              chosen.score >= 900 ||
-              (chosen.title && keywordMatches(chosen.title))
-            ) {
-              break;
-            }
-          }
-        }
-
-        // Heading-first fallback for variants where the displayed host is a
-        // sibling of the blue title rather than inside its anchor.
-        if (!bestBlock) {
-          var headings = Array.prototype.slice.call(root.querySelectorAll('h3,h2'));
-          for (var hIndex = 0; hIndex < headings.length; hIndex += 1) {
-            var headingNode = headings[hIndex];
-            var headingText = (headingNode.innerText || '').trim();
-            if (!keywordMatches(headingText)) continue;
-
-            var headingCard = headingNode;
-            for (
-              var headingDepth = 0;
-              headingCard && headingDepth < 11;
-              headingDepth += 1, headingCard = headingCard.parentElement
-            ) {
-              var headingBlockText = ((headingCard && headingCard.innerText) || '').trim();
-              if (
-                headingBlockText.length > 5000 ||
-                !mentionsTarget(headingBlockText) ||
-                !keywordMatches(headingBlockText)
-              ) {
-                continue;
-              }
-
-              state.targetTextSeen = true;
-              state.candidateText = headingBlockText.slice(0, 500);
-              var headingChoice = chooseAnchor(headingCard);
-              if (headingChoice) {
-                bestBlock = {
-                  score: headingChoice.score + 400,
-                  cardText: headingBlockText,
-                  chosen: headingChoice
-                };
-              }
-              break;
-            }
-            if (bestBlock) break;
-          }
-        }
-
-        return bestBlock;
-      }
-
-      function scan() {
-        try {
-          var pageText = (document.body && document.body.innerText) || '';
-          var href = location.href;
-          if (
-            /\\/sorry\\/|consent\\.google\\./i.test(href) ||
-            /unusual traffic|not a robot|recaptcha|verify you are human/i.test(pageText.slice(0, 5000))
-          ) {
-            state.blocked = true;
-            return;
-          }
-
-          state.blocked = false;
-          var root = document.querySelector('#search') ||
-            document.querySelector('#rso') ||
-            document.querySelector('main') ||
-            document.body;
-          if (!root) return;
-
-          var rootText = ((root && root.innerText) || '').trim();
-          if (mentionsTarget(rootText) && keywordMatches(rootText)) {
-            state.targetTextSeen = true;
-            if (!state.candidateText) state.candidateText = rootText.slice(0, 500);
-          }
-
-          var anchors = Array.prototype.slice.call(root.querySelectorAll('a[href]'));
-          var organic = [];
-          var candidates = [];
-
-          anchors.forEach(function(anchor) {
-            try {
-              var destination = unwrap(anchor.getAttribute('href') || anchor.href || '');
-              var host = destinationHost(destination);
-              if (!destination || /(^|\\.)google\\.[a-z.]+$/i.test(host)) return;
-
-              var current = anchor;
-              var bestBlockText = (anchor.innerText || '').trim();
-              for (var depth = 0; current && depth < 9; depth += 1, current = current.parentElement) {
-                var text = ((current && current.innerText) || '').trim();
-                if (text.length >= bestBlockText.length && text.length <= 4200) {
-                  bestBlockText = text;
-                }
-                if (mentionsTarget(text) && keywordMatches(text)) break;
-              }
-
-              if (/\\bSponsored\\b/i.test(bestBlockText.slice(0, 280))) return;
-
-              var titleNode = anchor.querySelector && anchor.querySelector('h3');
-              var title = (
-                (titleNode && titleNode.innerText) ||
-                anchor.getAttribute('aria-label') ||
-                anchor.innerText ||
-                ''
-              ).trim();
-
-              var looksOrganic = Boolean(titleNode) ||
-                bestBlockText.length >= 18 ||
-                host === target;
-              if (!looksOrganic) return;
-
-              var normalizedUrl = destination.split('#')[0];
-              organic.push(normalizedUrl + '|' + bestBlockText.slice(0, 120));
-
-              var exactHost = host === target;
-              var textHost = mentionsTarget(bestBlockText);
-              var keyMatch = keywordMatches(title) || keywordMatches(bestBlockText);
-              if (textHost && keywordMatches(bestBlockText)) {
-                state.targetTextSeen = true;
-                if (!state.candidateText || bestBlockText.length < state.candidateText.length) {
-                  state.candidateText = bestBlockText.slice(0, 500);
-                }
-              }
-              if ((exactHost || textHost) && keyMatch) {
-                var score = 0;
-                if (exactHost) score += 300;
-                if (keywordMatches(title)) score += 240;
-                if (titleNode) score += 120;
-                if (textHost) score += 80;
-                candidates.push({
-                  anchor: anchor,
-                  url: destination,
-                  title: title,
-                  score: score,
-                  rect: elementRect(anchor)
-                });
-              }
-            } catch (_) {
-              // Ignore malformed result anchors.
-            }
-          });
-
-          state.observedResults = organic.length;
-          state.signature = organic.slice(0, 40).join('||');
-
-          if (!candidates.length) {
-            var blockMatch = textBlockCandidate(root);
-            if (blockMatch && blockMatch.chosen) {
-              var chosen = blockMatch.chosen;
-              var preferredUrl =
-                chosen.directHost === target && chosen.directUrl
-                  ? chosen.directUrl
-                  : (chosen.rawUrl || chosen.directUrl);
-
-              if (preferredUrl) {
-                candidates.push({
-                  anchor: chosen.anchor,
-                  url: preferredUrl,
-                  title: chosen.title || queryText,
-                  score: blockMatch.score,
-                  rect: chosen.rect
-                });
-              }
-            }
-          }
-
-          if (!candidates.length) return;
-
-          candidates.sort(function(a, b) { return b.score - a.score; });
-          var winner = candidates[0];
-          matchedAnchor = winner.anchor;
-          var winnerUrl = winner.url;
-          var organicIndex = 0;
-          for (var k = 0; k < organic.length; k += 1) {
-            if (organic[k].indexOf(winnerUrl.split('#')[0] + '|') === 0) {
-              organicIndex = k;
-              break;
-            }
-          }
-
-          var winnerRect = winner.rect || elementRect(winner.anchor);
-          state.match = {
-            url: winnerUrl,
-            title: winner.title,
-            organicIndex: organicIndex,
-            clickPoint: winnerRect
-              ? {
-                  x: winnerRect.left + Math.max(8, Math.min(winnerRect.width / 2, winnerRect.width - 8)),
-                  y: winnerRect.top + winnerRect.height / 2
-                }
-              : undefined
-          };
-          state.matchedAt = Date.now();
-
-          if (observer) observer.disconnect();
-          if (timer) clearInterval(timer);
-        } catch (_) {
-          // Keep observer alive; later mutations may become parseable.
-        }
-      }
-
-      var observer = new MutationObserver(function() {
-        if (!state.match) scan();
-      });
-      var observeRoot = document.documentElement || document.body;
-      if (observeRoot) {
-        observer.observe(observeRoot, {
-          childList: true,
-          subtree: true,
-          characterData: true
-        });
-      }
-
-      var timer = setInterval(function() {
-        if (!state.match) scan();
-      }, 120);
-
-      window.__domGoogleWatcher = {
-        key: key,
-        state: state,
-        click: function() {
-          if (!matchedAnchor || !state.match) return false;
-          try {
-            matchedAnchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
-            matchedAnchor.target = '_self';
-            matchedAnchor.focus({ preventScroll: true });
-            try {
-              var rect = matchedAnchor.getBoundingClientRect && matchedAnchor.getBoundingClientRect();
-              var eventInit = {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                clientX: rect ? rect.left + rect.width / 2 : 0,
-                clientY: rect ? rect.top + rect.height / 2 : 0,
-                button: 0
-              };
-              matchedAnchor.dispatchEvent(new MouseEvent('mousedown', eventInit));
-              matchedAnchor.dispatchEvent(new MouseEvent('mouseup', eventInit));
-            } catch (_) {}
-            matchedAnchor.click();
-            return true;
-          } catch (_) {
-            return false;
-          }
-        },
-        stop: function() {
-          try { observer.disconnect(); } catch (_) {}
-          try { clearInterval(timer); } catch (_) {}
-        }
-      };
-
-      scan();
-      return Object.assign({}, state);
-    } catch (_) {
-      return null;
-    }
-  })()`;
+        const recognizeGoogleResults = ${recognizeGoogleResults.toString()};
+        const installGoogleResultObserver = ${installGoogleResultObserver.toString()};
+        return installGoogleResultObserver(${JSON.stringify(targetHost)}, ${JSON.stringify(query)}).state;
+    })()`;
 }
 function buildReadGoogleLiveTargetObserverScript() {
-    return `(function() {
-    try {
-      var watcher = window.__domGoogleWatcher;
-      if (!watcher || !watcher.state) return null;
-      return Object.assign({}, watcher.state);
-    } catch (_) {
-      return null;
-    }
-  })()`;
+    return `window.__domGoogleWatcher?.state || null`;
 }
 function buildClickGoogleLiveTargetObserverScript() {
-    return `(function() {
-    try {
-      var watcher = window.__domGoogleWatcher;
-      return Boolean(watcher && watcher.click && watcher.click());
-    } catch (_) {
-      return false;
-    }
-  })()`;
+    return `Boolean(window.__domGoogleWatcher?.click())`;
 }
 function buildStopGoogleLiveTargetObserverScript() {
-    return `(function() {
-    try {
-      var watcher = window.__domGoogleWatcher;
-      if (watcher && watcher.stop) watcher.stop();
-      delete window.__domGoogleWatcher;
-      return true;
-    } catch (_) {
-      return false;
-    }
-  })()`;
+    return `(function() { window.__domGoogleWatcher?.stop(); delete window.__domGoogleWatcher; return true; })()`;
 }
 function buildGoogleResultScanScript(targetHost, query = '') {
     return `(function() {
-    try {
-      var target = ${JSON.stringify(targetHost.toLowerCase())};
-      var queryText = ${JSON.stringify(query.toLowerCase())};
-      var loc = window.location.href;
-      if (/\\/sorry\\/|consent\\.google\\./.test(loc)) {
-        return { blocked: true, ready: true, resultsScanned: 0, observedResults: 0, signature: '' };
-      }
-
-      var bodyText = (document.body && document.body.innerText) || '';
-      if (/unusual traffic|not a robot|recaptcha/i.test(bodyText.slice(0, 2500))) {
-        return { blocked: true, ready: true, resultsScanned: 0, observedResults: 0, signature: '' };
-      }
-
-      function unwrap(href) {
-        try {
-          var resolved = new URL(href, location.href);
-          var googleHost = /(^|\\.)google\\.[a-z.]+$/i.test(resolved.hostname);
-          if (googleHost && resolved.pathname === '/url') {
-            return resolved.searchParams.get('url') || resolved.searchParams.get('q') || href;
-          }
-          return resolved.href;
-        } catch (_) {
-          return href;
-        }
-      }
-
-      function normalizeHost(host) {
-        return String(host || '').toLowerCase().replace(/^www\\./, '').replace(/\\.$/, '');
-      }
-
-      function destinationMatches(url) {
-        try {
-          var host = normalizeHost(new URL(url, location.href).hostname);
-          if (host === target || host.endsWith('.' + target)) return true;
-          if (target.indexOf('.') === -1 && host.split('.').indexOf(target) !== -1) return true;
-          return false;
-        } catch (_) {
-          return false;
-        }
-      }
-
-      var displayMentionsTarget = ${seo_1.resultTextMentionsHost.toString()};
-
-      function normalizeWords(text) {
-        return String(text || '')
-          .toLowerCase()
-          .replace(/www\\./g, '')
-          .replace(/[^a-z0-9]+/g, ' ')
-          .trim()
-          .replace(/\\s+/g, ' ');
-      }
-
-      var queryTokens = normalizeWords(queryText)
-        .split(' ')
-        .filter(function(token) { return token.length >= 2; });
-
-      function keywordMatches(text) {
-        if (!queryTokens.length) return true;
-        var normalized = ' ' + normalizeWords(text) + ' ';
-        return queryTokens.every(function(token) {
-          return normalized.indexOf(' ' + token + ' ') !== -1;
-        });
-      }
-
-      function websiteAndKeywordMatch(text) {
-        return displayMentionsTarget(text, target) && keywordMatches(text);
-      }
-
-      var searchRoot = document.querySelector('#search') || document.querySelector('#rso') || document.querySelector('main') || document.body;
-
-      function elementRect(node) {
-        if (!node || !node.getBoundingClientRect) return null;
-        var rect = node.getBoundingClientRect();
-        if (rect.width <= 2 || rect.height <= 2) return null;
-        return rect;
-      }
-
-      function isGoogleDestination(url) {
-        try {
-          return /(^|\\.)google\\.[a-z.]+$/i.test(new URL(url, location.href).hostname);
-        } catch (_) {
-          return true;
-        }
-      }
-
-      function resultContainerFor(node) {
-        if (!node) return null;
-        var direct = node.closest && node.closest('.MjjYud, .g, [data-snhf], [data-hveid]');
-        if (direct) return direct;
-        var current = node;
-        for (var depth = 0; current && depth < 7; depth += 1, current = current.parentElement) {
-          var text = ((current && current.innerText) || '').slice(0, 1800);
-          if (displayMentionsTarget(text, target) && current.querySelector && current.querySelector('a[href]')) return current;
-        }
-        return node.parentElement || node;
-      }
-
-      function bestAnchor(container, seedAnchor) {
-        var candidates = [];
-        if (seedAnchor) candidates.push(seedAnchor);
-        if (container && container.querySelectorAll) {
-          Array.prototype.slice.call(container.querySelectorAll('a[href]')).forEach(function (a) {
-            if (candidates.indexOf(a) === -1) candidates.push(a);
-          });
-        }
-        var best = null;
-        var bestScore = -1;
-        for (var j = 0; j < candidates.length; j += 1) {
-          var a = candidates[j];
-          if (!elementRect(a)) continue;
-          var destination = unwrap(a.getAttribute('href') || a.href || '');
-          var text = (a.innerText || a.getAttribute('aria-label') || '').trim();
-          var hasHeading = Boolean(a.querySelector && a.querySelector('h3'));
-          var direct = destinationMatches(destination);
-          var score = 0;
-          if (hasHeading) score += 100;
-          if (keywordMatches(text)) score += 120;
-          if (direct) score += 60;
-          if (text.length >= 18 && !displayMentionsTarget(text, target)) score += 35;
-          try {
-            var parsedDestination = new URL(destination, location.href);
-            if (direct && parsedDestination.pathname && parsedDestination.pathname !== '/') score += 30;
-          } catch (_) {
-            // Ignore malformed candidate URLs.
-          }
-          if (a === seedAnchor) score += 1;
-          if (score > bestScore) {
-            best = a;
-            bestScore = score;
-          }
-        }
-        return best;
-      }
-
-      var anchors = Array.prototype.slice.call(searchRoot ? searchRoot.querySelectorAll('a[href]') : []);
-
-      // Build a snapshot of actual organic-result anchors. This is used by
-      // the main process to decide when a page has genuinely stabilized.
-      // Do not use "any anchor exists" as readiness: Google's header/footer
-      // links render far earlier than the organic result set.
-      var organicSeen = {};
-      var organicSnapshot = [];
-      var organicUrls = [];
-      for (var s = 0; s < anchors.length; s += 1) {
-        var candidate = anchors[s];
-        var candidateHref = unwrap(candidate.getAttribute('href') || candidate.href || '');
-        if (!candidateHref || isGoogleDestination(candidateHref)) continue;
-
-        var candidateContainer = candidate.closest && candidate.closest('.MjjYud, .g, [data-snhf], [data-hveid]');
-        var candidateText = (((candidateContainer && candidateContainer.innerText) || candidate.innerText || '') + '').trim();
-        if (/\\bSponsored\\b/i.test(candidateText.slice(0, 240))) continue;
-
-        var hasHeading = Boolean(candidate.querySelector && candidate.querySelector('h3'));
-        var looksLikeResult = hasHeading || Boolean(candidateContainer) || candidateText.length >= 18;
-        if (!looksLikeResult) continue;
-
-        var snapshotKey = candidateHref.split('#')[0] + '|' + candidateText.slice(0, 120);
-        if (organicSeen[snapshotKey]) continue;
-        organicSeen[snapshotKey] = true;
-        organicSnapshot.push(snapshotKey);
-        organicUrls.push(candidateHref.split('#')[0]);
-      }
-
-      var observedResults = organicSnapshot.length;
-      var signature = organicSnapshot.slice(0, 30).join('||');
-      var resultsScanned = observedResults;
-
-      // TEXT-FIRST MATCHING:
-      // Google's visible domain line and blue title are not guaranteed to
-      // share the same <a> or stable class names. Start from nodes whose
-      // visible text contains the target website, climb to the smallest
-      // ancestor that also contains the search-keyword tokens, then choose
-      // the best article/title link inside that block.
-      var textCandidates = Array.prototype.slice.call(
-        searchRoot ? searchRoot.querySelectorAll('cite, span, div') : []
-      );
-      var bestTextMatch = null;
-
-      for (var t = 0; t < textCandidates.length; t += 1) {
-        var textNode = textCandidates[t];
-        var directText = (textNode.innerText || '').trim();
-        if (!displayMentionsTarget(directText, target)) continue;
-
-        var current = textNode;
-        for (var depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
-          if (!current.querySelectorAll) continue;
-          var blockText = ((current.innerText || '') + '').trim();
-          if (blockText.length < 12 || blockText.length > 3500) continue;
-          if (/\\bSponsored\\b/i.test(blockText.slice(0, 260))) break;
-          if (!websiteAndKeywordMatch(blockText)) continue;
-
-          var articleAnchor = bestAnchor(current, textNode.closest && textNode.closest('a[href]'));
-          if (!articleAnchor) continue;
-
-          var articleDestination = unwrap(articleAnchor.getAttribute('href') || articleAnchor.href || '');
-          if (!articleDestination || isGoogleDestination(articleDestination)) continue;
-
-          var articleTitleNode = articleAnchor.querySelector && articleAnchor.querySelector('h3');
-          var articleTitle = (
-            (articleTitleNode && articleTitleNode.innerText) ||
-            articleAnchor.getAttribute('aria-label') ||
-            articleAnchor.innerText ||
-            ''
-          ).trim();
-
-          // The keyword may live in the blue title or in the same result
-          // block/snippet. Requiring the full block to contain the tokens is
-          // what makes this resilient to Google's split title/domain markup.
-          if (!keywordMatches(blockText)) continue;
-
-          var articleRect = elementRect(articleAnchor);
-          if (!articleRect) continue;
-
-          var articleIndex = organicUrls.indexOf(articleDestination.split('#')[0]);
-          if (articleIndex < 0) articleIndex = 0;
-
-          var score = 0;
-          if (keywordMatches(articleTitle)) score += 200;
-          if (destinationMatches(articleDestination)) score += 120;
-          if (articleTitleNode) score += 80;
-          score -= Math.min(blockText.length, 3000) / 3000;
-
-          if (!bestTextMatch || score > bestTextMatch.score) {
-            bestTextMatch = {
-              score: score,
-              anchor: articleAnchor,
-              url: articleDestination,
-              title: articleTitle,
-              organicIndex: articleIndex
-            };
-          }
-          break;
-        }
-      }
-
-      if (bestTextMatch) {
-        bestTextMatch.anchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
-        var bestRect = elementRect(bestTextMatch.anchor);
-        if (bestRect) {
-          return {
-            blocked: false,
-            ready: true,
-            resultsScanned: resultsScanned,
-            observedResults: observedResults,
-            signature: signature,
-            match: {
-              url: bestTextMatch.url,
-              title: bestTextMatch.title,
-              organicIndex: bestTextMatch.organicIndex,
-              clickPoint: {
-                x: bestRect.left + Math.min(bestRect.width / 2, Math.max(12, bestRect.width - 12)),
-                y: bestRect.top + bestRect.height / 2
-              }
-            }
-          };
-        }
-      }
-
-      for (var i = 0; i < anchors.length; i += 1) {
-        var seed = anchors[i];
-        var destination = unwrap(seed.getAttribute('href') || seed.href || '');
-        var container = resultContainerFor(seed);
-        var nearbyText = ((container && container.innerText) || seed.innerText || '').slice(0, 1800);
-        if (/\\bSponsored\\b/i.test(nearbyText.slice(0, 220))) continue;
-
-        var matched = destinationMatches(destination) || displayMentionsTarget(nearbyText, target);
-        if (!matched) continue;
-
-        var anchor = bestAnchor(container, seed);
-        if (!anchor) continue;
-        var anchorDestination = unwrap(anchor.getAttribute('href') || anchor.href || destination);
-        var titleNode = anchor.querySelector && anchor.querySelector('h3');
-        var titleText = ((titleNode && titleNode.innerText) || anchor.getAttribute('aria-label') || anchor.innerText || '').trim();
-        anchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
-        var rect = elementRect(anchor);
-        if (!rect) continue;
-
-        var organicIndex = organicUrls.indexOf(anchorDestination.split('#')[0]);
-        if (organicIndex < 0) organicIndex = 0;
-        return {
-          blocked: false,
-          ready: true,
-          resultsScanned: resultsScanned,
-          observedResults: observedResults,
-          signature: signature,
-          match: {
-            url: anchorDestination,
-            title: titleText,
-            organicIndex: organicIndex,
-            clickPoint: {
-              x: rect.left + Math.min(rect.width / 2, Math.max(12, rect.width - 12)),
-              y: rect.top + rect.height / 2
-            }
-          }
-        };
-      }
-
-      // Fallback for Google's current layout where the visible domain line
-      // can be a sibling of the blue title rather than text inside its <a>.
-      var textNodes = Array.prototype.slice.call(searchRoot ? searchRoot.querySelectorAll('span, cite, div') : []);
-      for (var k = 0; k < textNodes.length; k += 1) {
-        var node = textNodes[k];
-        var nodeText = (node.innerText || '').trim();
-        if (!displayMentionsTarget(nodeText, target)) continue;
-        var card = resultContainerFor(node);
-        var cardText = ((card && card.innerText) || '').slice(0, 1800);
-        if (/\\bSponsored\\b/i.test(cardText.slice(0, 220))) continue;
-        var fallbackAnchor = bestAnchor(card, node.closest && node.closest('a[href]'));
-        if (!fallbackAnchor) continue;
-        var fallbackRect = elementRect(fallbackAnchor);
-        if (!fallbackRect) continue;
-        var fallbackDestination = unwrap(fallbackAnchor.getAttribute('href') || fallbackAnchor.href || '');
-        var fallbackTitleNode = fallbackAnchor.querySelector && fallbackAnchor.querySelector('h3');
-        var fallbackTitle = ((fallbackTitleNode && fallbackTitleNode.innerText) || fallbackAnchor.getAttribute('aria-label') || fallbackAnchor.innerText || '').trim();
-        fallbackAnchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
-        fallbackRect = elementRect(fallbackAnchor) || fallbackRect;
-        var fallbackIndex = organicUrls.indexOf(fallbackDestination.split('#')[0]);
-        if (fallbackIndex < 0) fallbackIndex = 0;
-        return {
-          blocked: false,
-          ready: true,
-          resultsScanned: resultsScanned,
-          observedResults: observedResults,
-          signature: signature,
-          match: {
-            url: fallbackDestination,
-            title: fallbackTitle,
-            organicIndex: fallbackIndex,
-            clickPoint: {
-              x: fallbackRect.left + Math.min(fallbackRect.width / 2, Math.max(12, fallbackRect.width - 12)),
-              y: fallbackRect.top + fallbackRect.height / 2
-            }
-          }
-        };
-      }
-
-      return {
-        blocked: false,
-        ready: observedResults > 0 || document.readyState === 'complete',
-        resultsScanned: resultsScanned,
-        observedResults: observedResults,
-        signature: signature
-      };
-    } catch (_) {
-      return { blocked: false, ready: false, resultsScanned: 0, observedResults: 0, signature: '' };
-    }
-  })()`;
+        const recognizeGoogleResults = ${recognizeGoogleResults.toString()};
+        const state = recognizeGoogleResults(${JSON.stringify(targetHost)}, ${JSON.stringify(query)}).state;
+        return Object.assign(state, { ready: state.observedResults > 0, resultsScanned: state.observedResults });
+    })()`;
 }
 function buildClickGoogleTargetResultScript(targetHost, query = '') {
     return `(function() {
-    try {
-      var target = ${JSON.stringify(targetHost.toLowerCase())};
-      var queryText = ${JSON.stringify(query.toLowerCase())};
-      var displayMentionsTarget = ${seo_1.resultTextMentionsHost.toString()};
-
-      function normalizeWords(text) {
-        return String(text || '')
-          .toLowerCase()
-          .replace(/www\\./g, '')
-          .replace(/[^a-z0-9]+/g, ' ')
-          .trim()
-          .replace(/\\s+/g, ' ');
-      }
-
-      var queryTokens = normalizeWords(queryText)
-        .split(' ')
-        .filter(function(token) { return token.length >= 2; });
-
-      function keywordMatches(text) {
-        if (!queryTokens.length) return true;
-        var normalized = ' ' + normalizeWords(text) + ' ';
-        return queryTokens.every(function(token) {
-          return normalized.indexOf(' ' + token + ' ') !== -1;
-        });
-      }
-
-      function unwrap(href) {
-        try {
-          var resolved = new URL(href, location.href);
-          var googleHost = /(^|\\.)google\\.[a-z.]+$/i.test(resolved.hostname);
-          if (googleHost && resolved.pathname === '/url') {
-            return resolved.searchParams.get('url') || resolved.searchParams.get('q') || href;
-          }
-          return resolved.href;
-        } catch (_) {
-          return href;
-        }
-      }
-
-      function normalizeHost(host) {
-        return String(host || '').toLowerCase().replace(/^www\\./, '').replace(/\\.$/, '');
-      }
-
-      function destinationMatches(url) {
-        try {
-          var host = normalizeHost(new URL(url, location.href).hostname);
-          if (host === target || host.endsWith('.' + target)) return true;
-          if (target.indexOf('.') === -1 && host.split('.').indexOf(target) !== -1) return true;
-          return false;
-        } catch (_) {
-          return false;
-        }
-      }
-
-      var searchRoot = document.querySelector('#search') || document.querySelector('#rso') || document.querySelector('main') || document.body;
-      var anchors = Array.prototype.slice.call(searchRoot ? searchRoot.querySelectorAll('a[href]') : []);
-      for (var i = 0; i < anchors.length; i += 1) {
-        var anchor = anchors[i];
-        var destination = unwrap(anchor.getAttribute('href') || anchor.href || '');
-        var container = anchor.closest('.MjjYud, .g, [data-snhf]') ||
-          (anchor.parentElement && anchor.parentElement.parentElement && anchor.parentElement.parentElement.parentElement) ||
-          anchor.parentElement || anchor;
-        var nearbyText = ((container && container.innerText) || anchor.innerText || '').slice(0, 1200);
-        if (/\\bSponsored\\b/i.test(nearbyText.slice(0, 180))) continue;
-
-        var displayText = nearbyText.toLowerCase().replace(/www\\./g, '');
-        var directMatch = destinationMatches(destination);
-        var textMatch = displayMentionsTarget(displayText, target) && keywordMatches(nearbyText);
-        if (!directMatch && !textMatch) continue;
-
-        // Prefer the actual result-title/citation anchor. A visible target
-        // citation is still accepted when Google changes the heading markup.
-        if (!anchor.querySelector('h3') && !directMatch && !displayMentionsTarget(anchor.innerText || '', target)) continue;
-        anchor.scrollIntoView({ block: 'center', behavior: 'auto' });
-        anchor.focus({ preventScroll: true });
-        anchor.click();
+        const recognizeGoogleResults = ${recognizeGoogleResults.toString()};
+        const result = recognizeGoogleResults(${JSON.stringify(targetHost)}, ${JSON.stringify(query)});
+        if (!result.anchor || !result.state.match) return false;
+        result.anchor.target = '_self';
+        result.anchor.click();
         return true;
-      }
-      return false;
-    } catch (_) {
-      return false;
-    }
-  })()`;
+    })()`;
 }
 function normalizeUrl(input) {
     const trimmed = input.trim();

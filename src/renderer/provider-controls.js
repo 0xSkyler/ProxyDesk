@@ -74,6 +74,21 @@ function renderBrowserMessage(state) {
     const card = Array.from(document.querySelectorAll('.browser-card'))
         .find((element) => element.querySelector('.browser-card__header strong')?.textContent === `Browser ${state.id}`);
     const footer = card?.querySelector('.browser-card__footer');
+    const status = card?.querySelector('.browser-card__header span');
+    if (status) {
+        const activities = {
+            'waiting-results': 'Waiting for results',
+            'scanning-results': 'Scanning results',
+            'opening-target': 'Opening target'
+        };
+        const defaults = { idle: 'Idle', loading: 'Loading', connected: 'Ready',
+            'proxy-checking': 'Proxy assigned', 'proxy-failed': 'Proxy failed',
+            'no-proxy': 'Waiting for proxy', crashed: 'Crashed' };
+        const activity = /^https?:\/\/[^/]*google\.[^/]+\/search(?:\?|$)/i.test(state.url)
+            ? activities[state.googleSearchActivity] : null;
+        const label = activity || defaults[state.connectionStatus] || state.connectionStatus;
+        if (label && status.textContent !== label) status.textContent = label;
+    }
     if (!footer)
         return;
     const failed = state.connectionStatus === 'proxy-failed' && Boolean(state.errorMessage);
