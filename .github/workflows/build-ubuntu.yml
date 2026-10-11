@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      publish_release:
+        description: Publish the immutable Linux release after all checks pass
+        type: boolean
+        default: false
       soak_seconds:
         description: Local fixture active seconds per build (60 for CI, 3600+ for soak)
         default: '60'
@@ -143,7 +147,7 @@ jobs:
           retention-days: 30
 
   publish-linux:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     needs: [build-linux, compare-runtime]
     runs-on: ubuntu-24.04
     permissions:
@@ -175,4 +179,4 @@ jobs:
           cd release-linux
           sha256sum *.AppImage *.tar.gz > SHA256SUMS
           cd ..
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "DOM v0.5.8 - selectable proxy APIs" --notes "DOM desktop release with simultaneous keyword assignment, user-selectable All Working and ProxyScrape Free APIs, editable provider endpoints, and corrected first navigation/status handling. Target matching, challenge handling, Keep Alive, rotation and browser controls retain the recovered workflow. Ubuntu CI runs source tests, packaged Electron and AppImage checks, an installed sandbox check and paired runtime measurements before publishing."
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "DOM v0.5.8 for Ubuntu 24.04" --notes "DOM v0.5.8 recognizes target results as they render and opens them without waiting for full page loading. Includes simultaneous keywords, selectable All Working and ProxyScrape Free APIs, editable endpoints, and bounded browser startup preparation. Existing Keep Alive, browser controls and challenge handling are retained. Ubuntu CI verifies unit tests, packaged lifecycle and Google recognition fixtures, AppImage startup, the installed production sandbox, and a paired runtime comparison before publishing. Run deploy/install-ubuntu.sh from your Ubuntu 24.04 x64 desktop as a regular user; SHA-256 verification and desktop service installation are included."
