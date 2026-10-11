@@ -25,6 +25,14 @@ const card = (href, heading = title, domain = 'appareldiary.com', extra = '') =>
     `<article>${extra}<div><cite>${domain}</cite></div><div><a href="${href}"><h3>${heading}</h3></a></div><p>Aug 22, 2026 — Set up an LP line balancing model in IE.</p></article>`;
 const html = (body) => `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" href="data:,"></head><body><div id="search"><div id="rso">${body}</div></div></body></html>`;
 const cases = [
+    { name: 'title relevance takes precedence over a neighboring heading tag', body: card('https://appareldiary.com/unrelated', 'About our magazine') + `<div class="MjjYud"><a href="${article}"><span class="VuuXrf">appareldiary.com</span><cite>https://appareldiary.com › Industrial Security</cite><div style="font-size:20px;color:blue">${title}</div></a></div>`, match: article, index: 1 },
+    { name: 'combined publisher and visual title in one link', body: `<div class="MjjYud"><a href="${article}"><span class="VuuXrf">appareldiary.com</span><div><cite>https://appareldiary.com › Industrial Security</cite></div><div style="font-size:20px;color:blue">${title}</div></a></div>`, match: article },
+    { name: 'combined publisher and visual title in an opaque Google link', body: `<div class="MjjYud"><a href="/url?sa=t"><span class="VuuXrf">appareldiary.com</span><cite>https://appareldiary.com › Industrial Security</cite><div style="font-size:20px;color:blue">${title}</div></a></div>`, match: null, seen: true, pending: true },
+    { name: 'unrelated Sponsored text above an organic Google module', body: `<section><div class="MjjYud"><span>Sponsored</span><div>AI Overview</div></div><div class="MjjYud"><cite>appareldiary.com</cite><a href="${article}"><h3>${title}</h3></a></div></section>`, match: article },
+    { name: 'Sponsored text in the same Google module stays excluded', body: `<div class="MjjYud"><span>Sponsored</span><cite>appareldiary.com</cite><a href="${article}"><h3>${title}</h3></a></div>`, match: null, seen: false },
+    { name: 'visible title overflowing a zero-height block link', body: `<article><cite>appareldiary.com</cite><a style="display:block;height:0" href="${article}"><h3>${title}</h3></a></article>`, match: article },
+    { name: 'hidden attribute overridden by visible layout', body: `<div hidden style="display:block">${card(article)}</div>`, match: article },
+    { name: 'title link gets its destination only during native activation', body: `<div class="MjjYud"><cite>appareldiary.com</cite><a jsname="UWckNb" onclick="location.href='${article}'"><h3>${title}</h3></a></div>`, match: null, seen: true, pending: true },
     { name: 'visible title remains clickable despite aria-hidden semantics', body: `<article><cite>appareldiary.com</cite><a aria-hidden="true" href="${article}"><h3>${title}</h3></a></article>`, match: article },
     { name: 'verified title link does not require a Google heading or citation', body: `<article><span>Apparel Diary</span><a href="${article}" style="font-size:20px"><span>${title}</span></a></article>`, match: article },
     { name: 'verified result outside Google named roots remains discoverable', body: `<main id="search">${card('https://competitor.test/a', 'Other result', 'competitor.test')}</main><section>${card(article)}</section>`, document: true, match: article },
@@ -168,7 +176,7 @@ let application;
                 // Drain the completed static fixture's navigation before
                 // measuring never-ending responses in the following cases.
                 await wc.loadURL('about:blank');
-                for (const scenario of ['progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'headinglessClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
+                for (const scenario of ['progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
                     phase = scenario;
                     mode = scenario; body = fixtures.resultCard; googleDomReady = false; googleLoadFinished = false; googleMatch = null; targetDomReady = false; pages = [];
                     if (scenario === 'fallback') body = body.replace('<a href=', '<a onclick="return false" href=');
@@ -178,6 +186,9 @@ let application;
                         `href="/search?q=${encodeURIComponent(fixtures.title)}" onclick="event.preventDefault(); location.href='${fixtures.article}';"`);
                     if (scenario === 'newLayout') body = `<article><div>appareldiary.com</div><h3><a style="display:contents" href="${fixtures.article}"><span>${fixtures.title}</span></a></h3></article>`;
                     if (scenario === 'headinglessClick') body = `<article><span>Apparel Diary</span><a style="font-size:20px" href="${fixtures.article}"><span>${fixtures.title}</span></a></article>`;
+                    if (scenario === 'combinedTitleClick') body = `<div class="MjjYud"><a href="/url?sa=t" onclick="event.preventDefault();location.href='${fixtures.article}'"><span class="VuuXrf">appareldiary.com</span><cite>https://appareldiary.com › Industrial Security</cite><div style="font-size:20px;color:blue">${fixtures.title}</div></a></div>`;
+                    if (scenario === 'aiOverviewClick') body = `<section><div class="MjjYud"><h2>AI Overview</h2><p>Access control and visitor management in apparel export factories protect intellectual property.</p><div role="progressbar" aria-busy="true">Loading...</div><span>Sponsored</span></div><div class="MjjYud"><cite>appareldiary.com</cite><a href="${fixtures.article}"><h3>Access Control and Visitor Management for Export Factories</h3></a></div></section>`;
+                    if (scenario === 'missingHrefClick') body = `<div class="MjjYud"><cite>appareldiary.com</cite><a jsname="UWckNb" onclick="location.href='${fixtures.article}'"><h3>${fixtures.title}</h3></a></div>`;
                     if (scenario === 'ariaHiddenClick') body = body.replace('<a href=', '<a aria-hidden="true" href=');
                     if (scenario === 'veryLateTitle') body = `<article><div>appareldiary.com</div><h3 id="unlinked-title">${fixtures.title}</h3></article><script>setTimeout(() => { const title=document.getElementById('unlinked-title'); const a=document.createElement('a'); a.href=${JSON.stringify(fixtures.article)}; title.replaceWith(a); a.appendChild(title); }, 13000);</script>`;
                     if (scenario === 'replacedLink') body = body.replace('<a href=', '<a onclick="event.preventDefault(); const next=this.cloneNode(true); next.removeAttribute(\'onclick\'); this.replaceWith(next);" href=');
@@ -232,6 +243,9 @@ let application;
         assert.ok(report.pendingClick.elapsedMs < 3_000);
         assert.ok(report.newLayout.elapsedMs < 3_000);
         assert.ok(report.headinglessClick.elapsedMs < 3_000);
+        assert.ok(report.combinedTitleClick.elapsedMs < 3_000);
+        assert.ok(report.aiOverviewClick.elapsedMs < 3_000);
+        assert.ok(report.missingHrefClick.elapsedMs < 3_000);
         assert.ok(report.ariaHiddenClick.elapsedMs < 3_000);
         assert.ok(report.hydrated.elapsedMs < 7_000);
         assert.ok(report.replacedLink.elapsedMs < 3_000);

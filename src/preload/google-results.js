@@ -86,22 +86,27 @@ function recognizeGoogleResults(targetHost, query = '') {
     if (!roots.length || !target) return { state, anchor: null };
 
     const headingSelector = 'h3,h2,h1,[role="heading"],.LC20lb,.DKV0Md';
-    const linkSelector = 'a[href],a[data-href],a[data-url],a[data-rw],a[data-pcu],a[data-amp-cur],[role="link"]';
+    const linkSelector = 'a,[role="link"]';
     const outsideResults = 'nav,header,footer,[role="navigation"],[role="menu"],[role="menubar"],[role="dialog"]';
+    const visibility = new WeakMap();
     function rendered(node) {
         // aria-hidden changes screen-reader exposure, not visual rendering.
         // Google can mark an otherwise visible title as an accessibility copy.
-        if (!node || !node.isConnected || node.closest('[hidden]')) return false;
+        if (!node || !node.isConnected) return false;
+        if (visibility.has(node)) return visibility.get(node);
         const style = getComputedStyle(node);
         if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') return false;
+        if (typeof node.checkVisibility === 'function' && style.display !== 'contents' &&
+            !node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
         if ([...node.getClientRects()].some((rect) => rect.width && rect.height)) {
-            return typeof node.checkVisibility !== 'function' || node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+            visibility.set(node, true); return true;
         }
-        // display:contents has no box of its own, but its title remains visible.
-        if (style.display !== 'contents') return false;
-        if ([...node.children].some(rendered)) return true;
+        // A link can have no box while its children still paint (contents or
+        // overflow). Use the actual rendered title, not HTML hidden attributes.
+        if ([...node.children].some(rendered)) { visibility.set(node, true); return true; }
         const range = document.createRange(); range.selectNodeContents(node);
-        return [...range.getClientRects()].some((rect) => rect.width && rect.height);
+        const visible = [...range.getClientRects()].some((rect) => rect.width && rect.height);
+        visibility.set(node, visible); return visible;
     }
     function headingLink(heading) {
         return heading.closest(linkSelector) || heading.querySelector(linkSelector);
@@ -117,8 +122,11 @@ function recognizeGoogleResults(targetHost, query = '') {
         }
         return rendered(node);
     }
+    const citations = new WeakMap();
     function hasTargetCitation(card) {
-        return [...card.querySelectorAll(citationSelector)].some(targetCitation);
+        if (!citations.has(card)) citations.set(card, targetCitation(card) ||
+            [...card.querySelectorAll(citationSelector)].some(targetCitation));
+        return citations.get(card);
     }
     function cardFor(anchor, ownedHeading) {
         let card = anchor;
@@ -135,7 +143,7 @@ function recognizeGoogleResults(targetHost, query = '') {
             });
             if (otherTitles.length) break;
             card = current;
-            if (current.matches('.g,[data-snhf],article')) break;
+            if (current.matches('.MjjYud,.g,[data-snhf],article')) break;
         }
         return card;
     }
@@ -146,7 +154,26 @@ function recognizeGoogleResults(targetHost, query = '') {
             return /^(sponsored|ad|ads|advertisement)$/i.test(text(node));
         });
     }
+    function descriptive(value) {
+        return value.length >= 8 && !/^(?:https?:\/\/|www\.)/i.test(value) &&
+            !/^(cached|translate|more|next|previous)$/i.test(value) && !displayedHost(value);
+    }
+    function visualTitle(anchor) {
+        // Newer cards can put the publisher, breadcrumb and title inside one
+        // anchor without an h3. Read the title's visible text independently.
+        let best = null;
+        for (const node of anchor.querySelectorAll('span,div')) {
+            if (node.closest('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b') ||
+                node.querySelector('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b') || !rendered(node)) continue;
+            const value = text(node), size = parseFloat(getComputedStyle(node).fontSize);
+            if (value.length > 300 || size < 18 || !descriptive(value)) continue;
+            const score = relevance(value) * 100 + size;
+            if (!best || score > best.score) best = { node, value, score };
+        }
+        return best;
+    }
     const records = [], seen = new Set();
+    state.diagnostics = { targetLinks: 0, hidden: 0, outside: 0, noTitle: 0, sponsored: 0 };
     let winner = null;
     const anchors = [...new Set(roots.flatMap((root) => [...root.querySelectorAll(linkSelector)]))];
     // Google can render result modules beside its named search containers.
@@ -159,16 +186,20 @@ function recognizeGoogleResults(targetHost, query = '') {
             ((anchor.querySelector(headingSelector) || anchor.closest(headingSelector)) && hasTargetCitation(cardFor(anchor)))) anchors.push(anchor);
     }
     for (const anchor of anchors) {
-        if (anchor.closest(outsideResults)) continue;
-        if (anchor.matches('[disabled],[aria-disabled="true"]')) continue;
-        if (!rendered(anchor)) continue;
-        const heading = anchor.querySelector(headingSelector) || anchor.closest(headingSelector);
         const url = anchorDestination(anchor);
         const direct = url && matchesHost(host(url.href));
+        if (direct) state.diagnostics.targetLinks++;
+        if (anchor.closest(outsideResults) || anchor.matches('[disabled],[aria-disabled="true"]')) {
+            if (direct) state.diagnostics.outside++; continue;
+        }
+        if (!rendered(anchor)) { if (direct) state.diagnostics.hidden++; continue; }
+        const heading = anchor.querySelector(headingSelector) || anchor.closest(headingSelector);
+        const googleRoute = url && google(url.hostname) && /^\/(?:search|url)\/?$/.test(url.pathname);
+        if (!heading && !direct && !googleRoute) continue;
         const label = text(anchor) || clean(anchor.getAttribute('aria-label'));
-        const titleText = label.length >= 8 && !/^(?:https?:\/\/|www\.)/i.test(label) &&
-            !/^(cached|translate|more|next|previous)$/i.test(label) && !displayedHost(label);
-        const googleTitle = titleText && url && google(url.hostname) && /^\/(?:search|url)\/?$/.test(url.pathname);
+        const styledTitle = !heading && visualTitle(anchor);
+        const titleText = styledTitle || descriptive(label);
+        const googleTitle = titleText && googleRoute;
         // Most Google anchors are menus, tools or media controls. Do not walk
         // their ancestors or read their layout on every document mutation.
         if (!heading && !direct && !googleTitle) continue;
@@ -177,11 +208,20 @@ function recognizeGoogleResults(targetHost, query = '') {
         // A descriptive title can use its verified target URL directly; an
         // opaque Google title also needs its own publisher citation.
         const citationTitle = !heading && titleText && !anchor.matches('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b') &&
-            !anchor.querySelector('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b') &&
+            (styledTitle || !anchor.querySelector('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b')) &&
             (citedTarget || (direct && ((url.pathname !== '/' && words(label).length >= 2) || parseFloat(getComputedStyle(anchor).fontSize) >= 18)));
-        if (!heading && !citationTitle) continue;
-        if (sponsored(card)) continue;
-        const title = text(heading) || clean(anchor.getAttribute('aria-label')) || text(anchor);
+        if (!heading && !citationTitle) {
+            if (direct) {
+                state.diagnostics.noTitle++;
+                if (citedTarget && !sponsored(card)) {
+                    state.targetTextSeen = true;
+                    state.candidateText = label;
+                }
+            }
+            continue;
+        }
+        if (sponsored(card)) { if (direct) state.diagnostics.sponsored++; continue; }
+        const title = text(heading) || styledTitle?.value || clean(anchor.getAttribute('aria-label')) || text(anchor);
         const key = url ? url.href.split('#')[0] : anchor.getAttribute('href');
         let organicIndex = records.findIndex((record) => record.key === key);
         if (organicIndex < 0) {
@@ -198,8 +238,8 @@ function recognizeGoogleResults(targetHost, query = '') {
         // URL, accept a different publisher, or activate a JavaScript URL.
         if ((!direct && !unresolved) || !url || seen.has(key)) continue;
         seen.add(key);
-        const score = (heading ? 100 : 0) + relevance(title) * 100 +
-            relevance(text(card)) * 20 + (citedTarget ? 10 : 0);
+        const score = (heading ? 25 : styledTitle ? 20 : 0) + relevance(title) * 200 +
+            relevance(text(card)) * 40 + (citedTarget ? 10 : 0);
         if (!winner || score > winner.score) winner = { anchor, url: direct ? url.href : undefined,
             unresolved: !direct, title, organicIndex, score };
     }

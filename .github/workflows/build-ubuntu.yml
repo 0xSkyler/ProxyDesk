@@ -1,4 +1,4 @@
-name: DOM v0.5.10 Linux build and regression
+name: DOM v0.5.11 Linux build and regression
 
 on:
   push:
@@ -57,7 +57,7 @@ jobs:
         run: xvfb-run -a node scripts/smoke-google-recognition.cjs release-linux/linux-unpacked/dom
       - name: Verify AppImage startup and clean exit
         run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.10-linux-x86_64.AppImage
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.11-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
       - name: Verify installed production sandbox
         run: |
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DOM-v0.5.10-Ubuntu-x64
+          name: DOM-v0.5.11-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
@@ -111,12 +111,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.10-Ubuntu-x64
+          name: DOM-v0.5.11-Ubuntu-x64
           path: .measurements/download
       - name: Prepare packaged runtime and hash-verified reference (benchmark only)
         run: |
           mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/DOM-v0.5.10-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          tar -xzf .measurements/download/DOM-v0.5.11-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
           npm run recover
           node scripts/compare-reference.cjs
       - name: Measure original v0.5.4
@@ -195,7 +195,7 @@ jobs:
           ref: ${{ steps.verified.outputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.10-Ubuntu-x64
+          name: DOM-v0.5.11-Ubuntu-x64
           path: release-linux
           run-id: ${{ steps.verified.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -233,4 +233,4 @@ jobs:
             test "$(git rev-parse "$TAG^{commit}")" = "$VERIFIED_SOURCE_SHA"
             target_args=(--verify-tag)
           fi
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.10 for Ubuntu 24.04" --notes "DOM v0.5.10 corrects visible-result rejection and interrupted scanning. Visually rendered titles are no longer excluded by aria-hidden, verified target links support descriptive headingless titles, target modules outside named search roots remain discoverable, and publisher metadata supports friendly site names. Unfinished observations retain their live observer and document, then resume within 250 ms instead of sleeping and reloading. Tests include results and title links appearing after 13 seconds. Verified targets click while loading; actual target landing is checked before Keep Alive. Scan errors are reported instead of remaining silently at Waiting/Scanning. Existing keywords, proxy controls, rotation and Keep Alive behavior are retained. Ubuntu tests verify 40 layouts, 13 opening/pagination scenarios, packaged lifecycle, AppImage startup, the installed production sandbox, and a paired runtime comparison. Run deploy/install-ubuntu.sh from your Ubuntu 24.04 x64 desktop as a regular user; checksum verification and desktop service installation are included."
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.11 for Ubuntu 24.04" --notes "DOM v0.5.11 recognizes combined publisher, breadcrumb and visual-title links even without heading tags. Ad checks stay within the result module, so unrelated Sponsored labels do not suppress organic results. Rendered children remain recognizable when a link has no box or CSS overrides a hidden attribute. Verified publisher/title links whose href is supplied on activation are supported. Keyword relevance ranks title candidates above incidental heading tags. Visible publisher text retains the current page while its title hydrates. Diagnostic rejection counts appear in SEO results. Verified targets activate while Google and its AI Overview are still loading; actual target landing is checked before Keep Alive. Existing keyword, proxy-source, rotation and Keep Alive behavior is retained. Ubuntu tests verify 48 layouts, 16 opening/pagination scenarios, packaged lifecycle, AppImage startup, the installed production sandbox, and a paired runtime comparison. Run deploy/install-ubuntu.sh from your Ubuntu 24.04 x64 desktop as a regular user; checksum verification and desktop service installation are included. These are controlled browser fixtures; the exact user Google session has not been verified."

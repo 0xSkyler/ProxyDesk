@@ -579,6 +579,14 @@ class BrowserManager extends node_events_1.EventEmitter {
             };
         }
         const pagesToScan = Math.max(1, Math.min(100, Math.floor(maxPages || 1)));
+        const recognitionNote = (state) => {
+            const diagnostics = state?.diagnostics;
+            if (!diagnostics?.targetLinks) return '';
+            const reasons = { hidden: 'not visible', outside: 'navigation/disabled', noTitle: 'no title', sponsored: 'sponsored' };
+            const rejected = Object.keys(reasons).filter(key => diagnostics[key])
+                .map(key => reasons[key] + ' ' + diagnostics[key]).join(', ');
+            return ` Target links: ${diagnostics.targetLinks}.` + (rejected ? ` Rejected: ${rejected}.` : '');
+        };
         let totalScanned = 0;
         let lastSearchUrl = '';
         // An unfinished observation retains its preload and current document.
@@ -913,7 +921,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                                 resultsScanned: totalScanned,
                                 resultPage: pageIndex + 1,
                                 monitoring: true,
-                                error: 'The target publisher is visible; continuing to watch its title link on this page.',
+                                error: 'The target publisher is visible; continuing to watch its title link on this page.' + recognitionNote(watcher),
                                 keepAliveStarted: false,
                                 ranAt
                             };
@@ -951,7 +959,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                     resultsScanned: totalScanned,
                     resultPage: pageIndex + 1,
                     monitoring: true,
-                    error: 'The target publisher is visible; continuing to watch its title link on this page.',
+                    error: 'The target publisher is visible; continuing to watch its title link on this page.' + recognitionNote(watcher),
                     keepAliveStarted: false,
                     ranAt
                 };
@@ -961,7 +969,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 // is not evidence that a target is absent. Keep this page.
                 return { browserId: id, status: 'monitoring', landedUrl: wc.getURL(),
                     resultsScanned: totalScanned, monitoring: true,
-                    error: watcher ? `Watching ${watcher.observedResults || 0} candidate results for ${targetHost}; keeping this page active.` :
+                    error: watcher ? `Watching ${watcher.observedResults || 0} candidate results for ${targetHost}; keeping this page active.${recognitionNote(watcher)}` :
                         'The Google result observer has not responded; keeping this page active.', ranAt };
             }
             this.stopGoogleRecognition(managed);
