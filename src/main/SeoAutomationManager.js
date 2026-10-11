@@ -486,7 +486,10 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             }
             // Matched and no-match observations are measurements, not terminal
             // states. Recheck periodically until the next proxy rotation.
-            await cancellableDelay(observationIntervalMs, signal);
+            // Unfinished pages keep their live preload and document. Resume
+            // promptly so a newly rendered target is clicked instead of
+            // sleeping for 30 seconds and then reloading it away.
+            await cancellableDelay(result.status === 'monitoring' ? 250 : observationIntervalMs, signal);
         }
     }
     isCurrent(generation) {

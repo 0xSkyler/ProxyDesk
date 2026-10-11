@@ -85,11 +85,13 @@ function recognizeGoogleResults(targetHost, query = '') {
     if (!roots.length && document.body) roots.push(document.body);
     if (!roots.length || !target) return { state, anchor: null };
 
-    const headingSelector = 'h3,h2,h1,[role="heading"]';
+    const headingSelector = 'h3,h2,h1,[role="heading"],.LC20lb,.DKV0Md';
     const linkSelector = 'a[href],a[data-href],a[data-url],a[data-rw],a[data-pcu],a[data-amp-cur],[role="link"]';
     const outsideResults = 'nav,header,footer,[role="navigation"],[role="menu"],[role="menubar"],[role="dialog"]';
     function rendered(node) {
-        if (!node || !node.isConnected || node.closest('[hidden],[aria-hidden="true"]')) return false;
+        // aria-hidden changes screen-reader exposure, not visual rendering.
+        // Google can mark an otherwise visible title as an accessibility copy.
+        if (!node || !node.isConnected || node.closest('[hidden]')) return false;
         const style = getComputedStyle(node);
         if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') return false;
         if ([...node.getClientRects()].some((rect) => rect.width && rect.height)) {
@@ -106,7 +108,7 @@ function recognizeGoogleResults(targetHost, query = '') {
     }
     const citationSelector = 'cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b,span,div';
     function targetCitation(node) {
-        const value = clean(node.textContent || node.getAttribute('data-dtld'));
+        const value = clean(node.getAttribute('data-dtld') || node.textContent);
         if (!value || value.length > 320 || !displayedHost(value)) return false;
         if (!node.matches('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b')) {
             // Ordinary URL labels must not be mentions inside snippets.
@@ -147,6 +149,15 @@ function recognizeGoogleResults(targetHost, query = '') {
     const records = [], seen = new Set();
     let winner = null;
     const anchors = [...new Set(roots.flatMap((root) => [...root.querySelectorAll(linkSelector)]))];
+    // Google can render result modules beside its named search containers.
+    // Supplement roots with target URLs or publisher-corroborated headings.
+    const primary = new Set(anchors);
+    for (const anchor of document.querySelectorAll(linkSelector)) {
+        if (primary.has(anchor)) continue;
+        const url = anchorDestination(anchor);
+        if ((url && matchesHost(host(url.href))) ||
+            ((anchor.querySelector(headingSelector) || anchor.closest(headingSelector)) && hasTargetCitation(cardFor(anchor)))) anchors.push(anchor);
+    }
     for (const anchor of anchors) {
         if (anchor.closest(outsideResults)) continue;
         if (anchor.matches('[disabled],[aria-disabled="true"]')) continue;
@@ -154,15 +165,20 @@ function recognizeGoogleResults(targetHost, query = '') {
         const heading = anchor.querySelector(headingSelector) || anchor.closest(headingSelector);
         const url = anchorDestination(anchor);
         const direct = url && matchesHost(host(url.href));
+        const label = text(anchor) || clean(anchor.getAttribute('aria-label'));
+        const titleText = label.length >= 8 && !/^(?:https?:\/\/|www\.)/i.test(label) &&
+            !/^(cached|translate|more|next|previous)$/i.test(label) && !displayedHost(label);
+        const googleTitle = titleText && url && google(url.hostname) && /^\/(?:search|url)\/?$/.test(url.pathname);
         // Most Google anchors are menus, tools or media controls. Do not walk
         // their ancestors or read their layout on every document mutation.
-        if (!heading && !direct) continue;
+        if (!heading && !direct && !googleTitle) continue;
         const card = cardFor(anchor);
         const citedTarget = hasTargetCitation(card);
-        // Headingless mobile/accessible layouts still need a citation in the
-        // same small card. A target-domain navigation/footer link is not a SERP.
-        const citationTitle = !heading && !card.querySelector(headingSelector) && citedTarget && text(anchor).length >= 8 &&
-            !anchor.querySelector('cite') && !/^(cached|translate|more|next|previous)$/i.test(text(anchor));
+        // A descriptive title can use its verified target URL directly; an
+        // opaque Google title also needs its own publisher citation.
+        const citationTitle = !heading && titleText && !anchor.matches('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b') &&
+            !anchor.querySelector('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b') &&
+            (citedTarget || (direct && ((url.pathname !== '/' && words(label).length >= 2) || parseFloat(getComputedStyle(anchor).fontSize) >= 18)));
         if (!heading && !citationTitle) continue;
         if (sponsored(card)) continue;
         const title = text(heading) || clean(anchor.getAttribute('aria-label')) || text(anchor);
@@ -247,7 +263,14 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
     function scan() {
         scheduled = null;
         if (stopped || (watcher.state?.match && !watcher.state.match.unresolved)) return;
-        const result = recognizeGoogleResults(target, query);
+        let result;
+        try { result = recognizeGoogleResults(target, query); }
+        catch (error) {
+            // Surface a failed scan instead of silently leaving the browser
+            // at Waiting/Scanning forever. The heartbeat can retry the DOM.
+            result = { anchor: null, state: { blocked: false, observedResults: 0,
+                documentParsed: document.readyState !== 'loading', recognitionError: String(error.message || error) } };
+        }
         watcher.state = result.state;
         matchedAnchor = result.anchor;
         const next = JSON.stringify(watcher.state);

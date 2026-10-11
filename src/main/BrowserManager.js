@@ -581,6 +581,20 @@ class BrowserManager extends node_events_1.EventEmitter {
         const pagesToScan = Math.max(1, Math.min(100, Math.floor(maxPages || 1)));
         let totalScanned = 0;
         let lastSearchUrl = '';
+        // An unfinished observation retains its preload and current document.
+        // Reloading it on every retry can erase a slow proxy's visible results
+        // immediately before their title links become usable.
+        const config = managed.googleConfig;
+        let resumePage = -1;
+        try {
+            const current = new URL(wc.getURL());
+            const start = Number(current.searchParams.get('start') || '0');
+            if (config && config.token === measurementToken && config.target === targetHost &&
+                config.query === query.trim() && isGoogleSearchResultsUrl(current.href) &&
+                current.searchParams.get('q') === config.query && String(start) === config.start &&
+                Number.isInteger(start) && start >= 0 && start % 10 === 0 && start / 10 < pagesToScan)
+                resumePage = start / 10;
+        } catch { /* A new navigation will install a fresh observer. */ }
         /**
          * Start Google navigation and return as soon as its DOM exists.
          * Result detection runs while the page is still rendering; full network
@@ -628,7 +642,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 throw new Error(message);
             }
         };
-        for (let pageIndex = 0; pageIndex < pagesToScan; pageIndex += 1) {
+        for (let pageIndex = Math.max(0, resumePage); pageIndex < pagesToScan; pageIndex += 1) {
             if (measurementToken != null &&
                 !this.isMeasurementSessionCurrent(id, measurementToken)) {
                 return {
@@ -642,7 +656,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             const searchUrl = (0, seo_1.buildGoogleSearchUrl)(query, pageIndex);
             lastSearchUrl = searchUrl;
             try {
-                await loadSearchDom(searchUrl);
+                if (pageIndex !== resumePage) await loadSearchDom(searchUrl);
             }
             catch (err) {
                 return {
@@ -726,6 +740,11 @@ class BrowserManager extends node_events_1.EventEmitter {
                     }
                 }
                 if (managed.googleState) watcher = managed.googleState;
+                if (watcher?.recognitionError) {
+                    this.stopGoogleRecognition(managed);
+                    return { browserId: id, status: 'error', monitoring: true, landedUrl: wc.getURL(),
+                        error: `Google result recognition failed: ${watcher.recognitionError}`, ranAt };
+                }
                 if (watcher?.blocked) {
                     this.stopGoogleRecognition(managed);
                     return {
@@ -882,21 +901,19 @@ class BrowserManager extends node_events_1.EventEmitter {
                         if (!targetTextSeenAt)
                             targetTextSeenAt = Date.now();
                         // A visible target locks this Google page. If Google exposes the
-                        // text but its clickable anchor remains unresolved, do NOT move
-                        // to page 2; report the failure so the same page/session retries.
+                        // text before its clickable anchor, keep the live observer
+                        // and document across observations instead of reloading.
                         if (!watcher.match && Date.now() - targetTextSeenAt >= 3_000) {
-                            this.stopGoogleRecognition(managed);
                             totalScanned += pageMaxObserved;
                             return {
                                 browserId: id,
-                                status: 'matched',
+                                status: 'monitoring',
                                 landedUrl: wc.getURL(),
                                 matchedTitle: watcher.candidateText || query,
                                 resultsScanned: totalScanned,
                                 resultPage: pageIndex + 1,
                                 monitoring: true,
-                                interactionStatus: 'click-failed',
-                                error: 'The target domain is visible in a result, but its destination link is not yet resolved. DOM will retry this page instead of paginating.',
+                                error: 'The target publisher is visible; continuing to watch its title link on this page.',
                                 keepAliveStarted: false,
                                 ranAt
                             };
@@ -925,18 +942,16 @@ class BrowserManager extends node_events_1.EventEmitter {
                 await delay(100);
             }
             totalScanned += pageMaxObserved;
-            this.stopGoogleRecognition(managed);
             if (watcher?.targetTextSeen) {
                 return {
                     browserId: id,
-                    status: 'matched',
+                    status: 'monitoring',
                     landedUrl: wc.getURL(),
                     matchedTitle: watcher.candidateText || query,
                     resultsScanned: totalScanned,
                     resultPage: pageIndex + 1,
                     monitoring: true,
-                    interactionStatus: 'click-failed',
-                    error: 'Visible target text locked this Google page, but no clickable result was resolved before the observation timeout. DOM will retry this page.',
+                    error: 'The target publisher is visible; continuing to watch its title link on this page.',
                     keepAliveStarted: false,
                     ranAt
                 };
@@ -946,8 +961,10 @@ class BrowserManager extends node_events_1.EventEmitter {
                 // is not evidence that a target is absent. Keep this page.
                 return { browserId: id, status: 'monitoring', landedUrl: wc.getURL(),
                     resultsScanned: totalScanned, monitoring: true,
-                    error: 'Google results are not confirmed complete; retrying this page without advancing.', ranAt };
+                    error: watcher ? `Watching ${watcher.observedResults || 0} candidate results for ${targetHost}; keeping this page active.` :
+                        'The Google result observer has not responded; keeping this page active.', ranAt };
             }
+            this.stopGoogleRecognition(managed);
             if (wc.isLoading())
                 wc.stop();
             // Only a page with no target text is allowed to paginate.

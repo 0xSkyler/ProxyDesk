@@ -37,6 +37,27 @@ test('Stop cancels long monitor sleeps immediately and detaches abort listener',
     const work = cancellableDelay(30000, controller.signal); controller.abort(); await work;
     await cancellableDelay(30000, controller.signal);
 });
+test('unfinished Google observations resume promptly instead of sleeping for thirty seconds', async () => {
+    const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
+    let searches = 0, keepAlive = false;
+    const browser = {
+        isMeasurementSessionCurrent: () => true,
+        broadcastSearch: async () => ++searches === 1 ? { status: 'monitoring' } :
+            { status: 'matched', interactionStatus: 'opened', matchedUrl: 'https://appareldiary.com/article' },
+        startControlledKeepAlive: () => { keepAlive = true; }
+    };
+    const automation = new SeoAutomationManager({}, browser, async () => []);
+    automation.state = { ...automation.state, running: true, cycleNumber: 1 };
+    const started = Date.now();
+    await withTimeout(
+        automation.monitorBrowserSession(0, 1, 1, 1, 'first', 'appareldiary.com', '', 5),
+        1_000, () => { automation.cycleController.abort(); throw new Error('Monitor did not resume promptly'); }
+    );
+    assert.equal(searches, 2);
+    assert.equal(keepAlive, true);
+    assert.ok(Date.now() - started < 1_000);
+    automation.cycleController.abort();
+});
 test('100 sleeping monitors keep cancellation listeners bounded and release every timer on rotation and Stop', async () => {
     const { getEventListeners, setMaxListeners, getMaxListeners } = require('node:events');
     class RuntimeAbortController extends AbortController {

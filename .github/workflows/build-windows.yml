@@ -1,4 +1,4 @@
-name: DOM v0.5.9 Windows build and release
+name: DOM v0.5.10 Windows build and release
 
 on:
   pull_request:
@@ -40,8 +40,8 @@ jobs:
       - name: Install into a clean directory
         shell: pwsh
         run: |
-          $installer = Resolve-Path 'release-windows/DOM-v0.5.9-Windows-x64-Setup.exe'
-          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.9-installed'
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.10-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.10-installed'
           $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
           $installedExecutable = Join-Path $installDirectory 'DOM.exe'
@@ -56,15 +56,15 @@ jobs:
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $installer = Get-Item 'release-windows/DOM-v0.5.9-Windows-x64-Setup.exe'
+          $installer = Get-Item 'release-windows/DOM-v0.5.10-Windows-x64-Setup.exe'
           $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
-          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.9-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.10-Windows-x64-SHA256SUMS.txt' -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: DOM-v0.5.9-Windows-x64
+          name: DOM-v0.5.10-Windows-x64
           path: |
-            release-windows/DOM-v0.5.9-Windows-x64-Setup.exe
-            release-windows/DOM-v0.5.9-Windows-x64-SHA256SUMS.txt
+            release-windows/DOM-v0.5.10-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.10-Windows-x64-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.9-Windows-x64
+          name: DOM-v0.5.10-Windows-x64
           path: release-assets
       - name: Publish verified Windows release
         env:
@@ -90,5 +90,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
           else
-            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.9 for Windows" --notes "DOM v0.5.9 improves recognition of visible first-page targets: headings around links, plain publisher labels, results outside rso, display:contents links, encoded redirects and AMP destinations. Verified Google title links can resolve their destination on click; replaced title elements are recognized again. Matching results click immediately while the page is still loading. Negative pagination checks allow delayed hydration after DOMContentLoaded and retain busy or unrecognized pages. Actual target landing is verified before Keep Alive starts. Existing keywords, proxy controls, clicks and Keep Alive behavior are retained. Native Electron tests cover 32 layouts, nine progressive opening/pagination cases, cancellation and 20-browser startup in both unpacked and freshly installed applications. SHA-256 verification is included."
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.10 for Windows" --notes "DOM v0.5.10 corrects visible-result rejection and interrupted scanning. Visually rendered titles are no longer excluded by aria-hidden, verified target links support descriptive headingless titles, target modules outside named search roots remain discoverable, and publisher metadata supports friendly site names. Unfinished observations retain their live observer and document, then resume within 250 ms instead of sleeping and reloading. Tests include results and title links appearing after 13 seconds. Verified targets click while loading; actual target landing is checked before Keep Alive. Scan errors are reported instead of remaining silently at Waiting/Scanning. Existing keywords, proxy controls, rotation and Keep Alive behavior are retained. Native Windows tests verify 40 layouts, 13 opening/pagination scenarios, cancellation and 20-browser startup in unpacked and freshly installed applications. SHA-256 verification is included."
           fi

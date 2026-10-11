@@ -77,6 +77,19 @@ test('an unresolved label cannot authorize a contradictory foreign destination',
     assert.equal(clicks, 0);
     await manager.destroyAll();
 });
+test('a failed result scan is reported instead of leaving the browser waiting silently', async () => {
+    const { manager, managed, wc, publish } = await setup();
+    wc.loadURL = async url => {
+        wc.url = url;
+        setImmediate(() => publish({ observedResults: 0, recognitionError: 'Scan failed', documentParsed: false }));
+    };
+    const token = manager.startMeasurementSession(1);
+    const result = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+    assert.equal(result.status, 'error');
+    assert.match(result.error, /Google result recognition failed: Scan failed/);
+    assert.equal(managed.googleConfig, null);
+    await manager.destroyAll();
+});
 for (const scenario of ['unrecognized', 'busy']) {
     test(`${scenario} first-page results cannot be treated as an absent target and skipped`, async () => {
         let time = 0;
@@ -113,6 +126,28 @@ test('recognition rejects obsolete tokens, navigations, different queries and if
     assert.equal(managed.googleConfig, null);
     wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'dom:google-state', { navigation: 9, token, documentUrl: wc.url, state: { observedResults: 7 } });
     assert.equal(managed.googleState, null);
+    await manager.destroyAll();
+});
+test('an unfinished page retains its observer and a retry opens its target without reloading', async () => {
+    let time = 0;
+    class Clock extends Date { static now() { return time += 1_000; } }
+    const { manager, managed, wc, publish } = await setup({ Date: Clock });
+    const pages = [];
+    wc.loadURL = async (url) => {
+        wc.url = url; pages.push(url);
+        setImmediate(() => publish({ documentParsed: false, observedResults: 1, signature: 'initial', targetTextSeen: false }));
+    };
+    const token = manager.startMeasurementSession(1);
+    const first = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+    assert.equal(first.status, 'monitoring');
+    assert.ok(managed.googleConfig, 'the live observer must survive an unfinished observation');
+    publish({ documentParsed: false, observedResults: 2, targetTextSeen: true,
+        match: { url: 'https://appareldiary.com/article', title: 'Late result', organicIndex: 1 } });
+    wc.send = channel => { if (channel === 'dom:google-click') wc.url = 'https://appareldiary.com/article'; };
+    const second = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+    assert.equal(second.interactionStatus, 'opened');
+    assert.equal(second.resultPage, 1);
+    assert.equal(pages.length, 1, 'retry must not reload and erase a newly rendered result');
     await manager.destroyAll();
 });
 test('queued preload handshakes tolerate disposed native frames during Stop', async () => {

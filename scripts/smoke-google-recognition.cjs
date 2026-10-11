@@ -25,6 +25,14 @@ const card = (href, heading = title, domain = 'appareldiary.com', extra = '') =>
     `<article>${extra}<div><cite>${domain}</cite></div><div><a href="${href}"><h3>${heading}</h3></a></div><p>Aug 22, 2026 — Set up an LP line balancing model in IE.</p></article>`;
 const html = (body) => `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" href="data:,"></head><body><div id="search"><div id="rso">${body}</div></div></body></html>`;
 const cases = [
+    { name: 'visible title remains clickable despite aria-hidden semantics', body: `<article><cite>appareldiary.com</cite><a aria-hidden="true" href="${article}"><h3>${title}</h3></a></article>`, match: article },
+    { name: 'verified title link does not require a Google heading or citation', body: `<article><span>Apparel Diary</span><a href="${article}" style="font-size:20px"><span>${title}</span></a></article>`, match: article },
+    { name: 'verified result outside Google named roots remains discoverable', body: `<main id="search">${card('https://competitor.test/a', 'Other result', 'competitor.test')}</main><section>${card(article)}</section>`, document: true, match: article },
+    { name: 'publisher metadata is usable alongside its friendly display name', body: `<article><span data-dtld="appareldiary.com">Apparel Diary</span><a href="/url?sa=t"><h3>${title}</h3></a></article>`, match: null, seen: true, pending: true },
+    { name: 'Google styled span title with an opaque link is eligible', body: `<article><div>appareldiary.com</div><a href="/url?sa=t"><span class="LC20lb">${title}</span></a></article>`, match: null, seen: true, pending: true },
+    { name: 'cited headingless Google title is eligible for activation', body: `<article><div>appareldiary.com</div><a style="font-size:20px" href="/url?sa=t"><span>${title}</span></a></article>`, match: null, seen: true, pending: true },
+    { name: 'publisher name link cannot replace the article title', body: `<article><a href="https://appareldiary.com"><span class="VuuXrf">Apparel Diary</span></a><div>appareldiary.com</div></article>`, match: null },
+    { name: 'zero-height inline title link has a visible heading', body: `<article><cite>appareldiary.com</cite><a style="font-size:0;line-height:0" href="${article}"><h3 style="font-size:20px;line-height:26px">${title}</h3></a></article>`, match: article, point: true },
     { name: 'screenshot sibling citation/title', body: card(article), match: article },
     { name: 'heading contains the result anchor', body: `<article><div>https://appareldiary.com › Linear Programming</div><h3><a href="${article}">${title}</a></h3></article>`, match: article },
     { name: 'display contents anchor retains its visible title', body: card(article).replace('<a href=', '<a style="display:contents" href='), match: article, point: true },
@@ -136,7 +144,7 @@ let application;
                                 // remain open. Late mode exceeds the old stable-page
                                 // pagination grace before revealing the target.
                                 controller.enqueue(encoder.encode('<article><a href="https://competitor.test/a"><h3>Other article</h3></a></article>'));
-                                pending = setTimeout(() => controller.enqueue(encoder.encode(body)), mode === 'late' ? 3_500 : 250);
+                                pending = setTimeout(() => controller.enqueue(encoder.encode(body)), mode === 'late' ? 3_500 : mode === 'veryLate' ? 13_000 : 250);
                                 timers.add(pending);
                             } else controller.enqueue(encoder.encode('<h1>Target article</h1><p>Content is usable while its response remains open.</p>'));
                         },
@@ -160,7 +168,7 @@ let application;
                 // Drain the completed static fixture's navigation before
                 // measuring never-ending responses in the following cases.
                 await wc.loadURL('about:blank');
-                for (const scenario of ['progressive', 'late', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'replacedLink', 'hydrated', 'pagination']) {
+                for (const scenario of ['progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'headinglessClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
                     phase = scenario;
                     mode = scenario; body = fixtures.resultCard; googleDomReady = false; googleLoadFinished = false; googleMatch = null; targetDomReady = false; pages = [];
                     if (scenario === 'fallback') body = body.replace('<a href=', '<a onclick="return false" href=');
@@ -169,9 +177,19 @@ let application;
                     if (scenario === 'pendingClick') body = body.replace(`href="${fixtures.article}"`,
                         `href="/search?q=${encodeURIComponent(fixtures.title)}" onclick="event.preventDefault(); location.href='${fixtures.article}';"`);
                     if (scenario === 'newLayout') body = `<article><div>appareldiary.com</div><h3><a style="display:contents" href="${fixtures.article}"><span>${fixtures.title}</span></a></h3></article>`;
+                    if (scenario === 'headinglessClick') body = `<article><span>Apparel Diary</span><a style="font-size:20px" href="${fixtures.article}"><span>${fixtures.title}</span></a></article>`;
+                    if (scenario === 'ariaHiddenClick') body = body.replace('<a href=', '<a aria-hidden="true" href=');
+                    if (scenario === 'veryLateTitle') body = `<article><div>appareldiary.com</div><h3 id="unlinked-title">${fixtures.title}</h3></article><script>setTimeout(() => { const title=document.getElementById('unlinked-title'); const a=document.createElement('a'); a.href=${JSON.stringify(fixtures.article)}; title.replaceWith(a); a.appendChild(title); }, 13000);</script>`;
                     if (scenario === 'replacedLink') body = body.replace('<a href=', '<a onclick="event.preventDefault(); const next=this.cloneNode(true); next.removeAttribute(\'onclick\'); this.replaceWith(next);" href=');
                     const token = manager.startMeasurementSession(901), started = Date.now();
-                    const result = await manager.broadcastSearch(901, fixtures.title, 'appareldiary.com', 3, token);
+                    let result = await manager.broadcastSearch(901, fixtures.title, 'appareldiary.com', 3, token);
+                    if (['veryLate', 'veryLateTitle'].includes(scenario)) {
+                        if (result.status !== 'monitoring' || !managed.googleConfig) throw new Error('Slow page lost its live observer');
+                        while (result.status === 'monitoring' && Date.now() - started < 17_000) {
+                            await new Promise(resolve => later(resolve, 250));
+                            result = await manager.broadcastSearch(901, fixtures.title, 'appareldiary.com', 3, token);
+                        }
+                    }
                     stats[scenario] = { result, elapsedMs: Date.now() - started, googleDomReady, googleLoadFinished, googleMatch, targetDomReady, targetLoading: wc.isLoading(), pages: [...pages] };
                     if (result.interactionStatus !== 'opened' || result.matchedUrl !== fixtures.article || result.resultPage !== (scenario === 'pagination' ? 2 : 1)) throw new Error(`${scenario}: target was missed ${JSON.stringify(stats[scenario])}`);
                     // Navigation cancellation can emit did-finish-load while
@@ -203,14 +221,18 @@ let application;
                 await manager.destroyAll();
                 window.destroy();
             }
-        }, { cases, title, article, resultCard: card(article) }), 90_000, 'Native Google recognition');
+        }, { cases, title, article, resultCard: card(article) }), 110_000, 'Native Google recognition');
         assert.equal(report.cases.length, cases.length);
         assert.ok(report.progressive.elapsedMs < 3_000);
         assert.ok(report.late.elapsedMs < 7_000);
+        assert.ok(report.veryLate.elapsedMs > 12_000 && report.veryLate.elapsedMs < 17_000);
+        assert.ok(report.veryLateTitle.elapsedMs > 12_000 && report.veryLateTitle.elapsedMs < 17_000);
         assert.ok(report.linkUpdate.elapsedMs < 3_000);
         assert.ok(report.fallback.elapsedMs < 7_000);
         assert.ok(report.pendingClick.elapsedMs < 3_000);
         assert.ok(report.newLayout.elapsedMs < 3_000);
+        assert.ok(report.headinglessClick.elapsedMs < 3_000);
+        assert.ok(report.ariaHiddenClick.elapsedMs < 3_000);
         assert.ok(report.hydrated.elapsedMs < 7_000);
         assert.ok(report.replacedLink.elapsedMs < 3_000);
         assert.ok(report.pagination.elapsedMs < 10_000);
