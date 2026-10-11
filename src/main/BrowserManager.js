@@ -668,8 +668,9 @@ class BrowserManager extends node_events_1.EventEmitter {
             let watcher = managed.googleState;
             let pageMaxObserved = watcher?.observedResults ?? 0;
             let lastSignature = watcher?.signature ?? '';
-            let stableScans = watcher?.signature ? 1 : 0;
             let firstObservedAt = watcher?.observedResults ? Date.now() : 0;
+            let lastResultChangeAt = firstObservedAt;
+            let pageConfirmedAbsent = false;
             let targetTextSeenAt = watcher?.targetTextSeen ? Date.now() : 0;
             const watchStartedAt = Date.now();
             const watchDeadline = watchStartedAt + 12_000;
@@ -741,8 +742,9 @@ class BrowserManager extends node_events_1.EventEmitter {
                     if (watcher.match) {
                         // Match detection and first click are deliberately coupled to the
                         // same page watcher so Google cannot paginate between them.
-                        const matched = watcher.match;
-                        if (!(0, seo_1.hostMatchesTarget)(matched.url, targetHost)) {
+                        let matched = watcher.match;
+                        if (!(0, seo_1.hostMatchesTarget)(matched.url, targetHost) &&
+                            !(!matched.url && matched.unresolved && matched.displayedHost === targetHost)) {
                             this.stopGoogleRecognition(managed);
                             return { browserId: id, status: 'error', error: 'Detected result destination did not match the target website.', ranAt };
                         }
@@ -780,6 +782,14 @@ class BrowserManager extends node_events_1.EventEmitter {
                                     ranAt
                                 };
                             }
+                            // Google can populate href after hydration or a first
+                            // click. The isolated watcher keeps observing that link.
+                            const resolved = managed.googleState?.match;
+                            if (matched.unresolved && resolved?.url &&
+                                (0, seo_1.hostMatchesTarget)(resolved.url, targetHost)) {
+                                matched = resolved;
+                                wc.send('dom:google-click', managed.googleConfig.navigation);
+                            }
                             try {
                                 const current = wc.getURL();
                                 if ((0, seo_1.hostMatchesTarget)(current, targetHost)) {
@@ -788,7 +798,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                                         browserId: id,
                                         status: 'matched',
                                         landedUrl: current,
-                                        matchedUrl: matched.url,
+                                        matchedUrl: matched.url || current,
                                         matchedTitle: matched.title,
                                         resultsScanned: totalScanned,
                                         position: pageIndex * 10 + matched.organicIndex + 1,
@@ -804,6 +814,15 @@ class BrowserManager extends node_events_1.EventEmitter {
                                 // Keep waiting while navigation commits.
                             }
                             await delay(75);
+                        }
+                        if (!(0, seo_1.hostMatchesTarget)(matched.url, targetHost)) {
+                            this.stopGoogleRecognition(managed);
+                            totalScanned += pageMaxObserved;
+                            return { browserId: id, status: 'matched', landedUrl: wc.getURL(),
+                                matchedTitle: matched.title, resultsScanned: totalScanned,
+                                position: pageIndex * 10 + matched.organicIndex + 1, resultPage: pageIndex + 1,
+                                monitoring: true, interactionStatus: 'click-failed', keepAliveStarted: false,
+                                error: 'The target publisher is visible, but Google did not resolve or open its title link. DOM will retry this page without paginating.', ranAt };
                         }
                         // DOM/native activation can be ignored by some Google result
                         // layouts. The final fallback uses ONLY the exact URL captured
@@ -885,17 +904,20 @@ class BrowserManager extends node_events_1.EventEmitter {
                     }
                     if (watcher.observedResults > 0 && !watcher.targetTextSeen) {
                         if (!firstObservedAt)
-                            firstObservedAt = Date.now();
-                        if (watcher.signature && watcher.signature === lastSignature) {
-                            stableScans += 1;
-                        }
-                        else {
+                            firstObservedAt = lastResultChangeAt = Date.now();
+                        if (watcher.signature !== lastSignature) {
                             lastSignature = watcher.signature;
-                            stableScans = 1;
+                            lastResultChangeAt = Date.now();
                         }
-                        // Pagination is allowed only for a stable page where no target
-                        // text has ever been observed.
-                        if (watcher.documentParsed && stableScans >= 12 && Date.now() - firstObservedAt >= 2_500) {
+                        // A match never waits for these negative checks. Before
+                        // moving on, allow JS-hydrated rows to arrive and require
+                        // a rendered footer/next link or a full set of results.
+                        // Full network loading and the browser's Ready label
+                        // are deliberately irrelevant to this decision.
+                        if (watcher.documentParsed && !watcher.pendingResults &&
+                            (watcher.nextPage || watcher.paginationRendered || watcher.observedResults >= 10) &&
+                            Date.now() - firstObservedAt >= 6_000 && Date.now() - lastResultChangeAt >= 2_000) {
+                            pageConfirmedAbsent = true;
                             break;
                         }
                     }
@@ -919,12 +941,12 @@ class BrowserManager extends node_events_1.EventEmitter {
                     ranAt
                 };
             }
-            if (!watcher?.documentParsed) {
-                // Incomplete streamed HTML may still contain a first-page
-                // target. Retry this page rather than silently skipping it.
+            if (!pageConfirmedAbsent) {
+                // Unknown markup, pending hydration, or an incomplete response
+                // is not evidence that a target is absent. Keep this page.
                 return { browserId: id, status: 'monitoring', landedUrl: wc.getURL(),
                     resultsScanned: totalScanned, monitoring: true,
-                    error: 'Google results are still rendering; retrying without advancing the page.', ranAt };
+                    error: 'Google results are not confirmed complete; retrying this page without advancing.', ranAt };
             }
             if (wc.isLoading())
                 wc.stop();

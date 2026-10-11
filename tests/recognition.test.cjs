@@ -4,9 +4,9 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { loadTree, fakeElectron } = require('./helpers.cjs');
 const root = path.resolve(__dirname, '..');
-async function setup() {
+async function setup(globals = {}) {
     const electron = fakeElectron();
-    const { BrowserManager } = loadTree(root, electron)('src/main/BrowserManager.js');
+    const { BrowserManager } = loadTree(root, electron, globals)('src/main/BrowserManager.js');
     const manager = new BrowserManager(); manager.attachWindow(electron.window);
     await manager.createBrowser(1, { startPage: 'about:blank' });
     const managed = manager.get(1), wc = managed.view.webContents;
@@ -41,6 +41,61 @@ test('a visible first-page target opens while loadURL and executeJavaScript neve
     assert.equal(managed.state.googleSearchActivity, 'opening-target');
     await manager.destroyAll();
 });
+test('a cited Google title resolves on click without waiting for Ready or inventing a destination', async () => {
+    const { manager, wc, publish } = await setup();
+    let scriptCalls = 0;
+    wc.executeJavaScript = () => { scriptCalls++; return new Promise(() => {}); };
+    wc.isLoading = () => true;
+    wc.loadURL = (url) => {
+        wc.url = url;
+        setImmediate(() => publish({ observedResults: 1, documentParsed: false, targetTextSeen: true,
+            match: { unresolved: true, displayedHost: 'appareldiary.com', title: 'Visible title', organicIndex: 0 } }));
+        return new Promise(() => {});
+    };
+    wc.send = (channel) => { if (channel === 'dom:google-click') wc.url = 'https://appareldiary.com/actual-article'; };
+    const token = manager.startMeasurementSession(1), started = Date.now();
+    const result = await manager.broadcastSearch(1, 'linear programming', 'appareldiary.com', 5, token);
+    assert.equal(result.resultPage, 1);
+    assert.equal(result.matchedUrl, 'https://appareldiary.com/actual-article');
+    assert.equal(result.interactionStatus, 'opened');
+    assert.equal(scriptCalls, 0);
+    assert.ok(Date.now() - started < 1_000);
+    await manager.destroyAll();
+});
+test('an unresolved label cannot authorize a contradictory foreign destination', async () => {
+    const { manager, wc, publish } = await setup();
+    let clicks = 0;
+    wc.loadURL = async (url) => {
+        wc.url = url;
+        setImmediate(() => publish({ observedResults: 1, documentParsed: false,
+            match: { unresolved: true, displayedHost: 'appareldiary.com', url: 'https://competitor.test/a', organicIndex: 0 } }));
+    };
+    wc.send = (channel) => { if (channel === 'dom:google-click') clicks++; };
+    const token = manager.startMeasurementSession(1);
+    const result = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+    assert.equal(result.status, 'error');
+    assert.equal(clicks, 0);
+    await manager.destroyAll();
+});
+for (const scenario of ['unrecognized', 'busy']) {
+    test(`${scenario} first-page results cannot be treated as an absent target and skipped`, async () => {
+        let time = 0;
+        class Clock extends Date { static now() { return time += 1_000; } }
+        const { manager, wc, publish } = await setup({ Date: Clock });
+        const pages = [];
+        wc.loadURL = async (url) => {
+            wc.url = url; pages.push(url);
+            setImmediate(() => publish({ documentParsed: true, observedResults: scenario === 'busy' ? 10 : 0,
+                pendingResults: scenario === 'busy', nextPage: true, signature: 'stable', targetTextSeen: false }));
+        };
+        const token = manager.startMeasurementSession(1);
+        const result = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+        assert.equal(result.status, 'monitoring');
+        assert.equal(pages.length, 1);
+        assert.equal(new URL(pages[0]).searchParams.get('start'), null);
+        await manager.destroyAll();
+    });
+}
 test('recognition rejects obsolete tokens, navigations, different queries and iframe messages', async () => {
     const { manager, managed, wc, publish } = await setup();
     const token = manager.startMeasurementSession(1);

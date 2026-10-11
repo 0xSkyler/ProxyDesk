@@ -21,23 +21,37 @@ function recognizeGoogleResults(targetHost, query = '') {
         return Boolean(target && (value === target || value.endsWith('.' + target) ||
             (!target.includes('.') && value.split('.').includes(target))));
     }
-    function google(value) { return /(^|\.)google\.[a-z.]+$/i.test(value); }
+    function google(value) { return /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(value); }
+    function decodeDestination(value) {
+        let decoded = clean(value);
+        // Decode wrappers, without changing escapes in an already valid URL.
+        for (let i = 0; i < 3 && /^(?:https?%|%2f%2f)/i.test(decoded); i++) {
+            try { decoded = decodeURIComponent(decoded); } catch { break; }
+        }
+        return decoded;
+    }
     function destination(value) {
         try {
-            let url = new URL(value, location.href);
+            let url = new URL(decodeDestination(value), location.href);
             for (let i = 0; i < 4 && google(url.hostname); i++) {
+                if (/^\/amp\/(?:s\/)?[^/]+\./.test(url.pathname)) {
+                    const secure = url.pathname.startsWith('/amp/s/');
+                    url = new URL((secure ? 'https://' : 'http://') + url.pathname.slice(secure ? 7 : 5) + url.search);
+                    continue;
+                }
                 // A search query is not a redirect URL. Only unwrap link routes.
-                if (!/^\/(url|imgres|aclk)\/?$/.test(url.pathname)) break;
+                if (!/^\/(url|imgres|aclk|interstitial|local_url)\/?$/.test(url.pathname)) break;
                 const next = url.searchParams.get('url') || url.searchParams.get('q') ||
                     url.searchParams.get('adurl') || url.searchParams.get('imgurl');
-                if (!next || !/^https?:\/\//i.test(next)) break;
-                url = new URL(next);
+                const decoded = decodeDestination(next);
+                if (!/^(?:https?:)?\/\//i.test(decoded)) break;
+                url = new URL(decoded, url.href);
             }
             return /^https?:$/.test(url.protocol) ? url : null;
         } catch { return null; }
     }
     function anchorDestination(anchor) {
-        for (const attribute of ['href', 'data-href', 'data-url']) {
+        for (const attribute of ['href', 'data-href', 'data-url', 'data-rw', 'data-pcu', 'data-amp-cur']) {
             const value = anchor.getAttribute(attribute);
             if (!value) continue;
             const url = destination(value);
@@ -61,28 +75,60 @@ function recognizeGoogleResults(targetHost, query = '') {
         return tokens.length ? tokens.filter((token) => available.has(token)).length / tokens.length : 0;
     }
     const state = { blocked: false, observedResults: 0, signature: '', targetTextSeen: false, candidateText: '',
-        documentParsed: document.readyState !== 'loading' };
+        documentParsed: document.readyState !== 'loading', nextPage: false, paginationRendered: false, pendingResults: false };
     const blockedUrl = /\/sorry\/|^https?:\/\/consent\.google\./i.test(location.href);
     const challenge = document.querySelector('form[action*="/sorry/"], #captcha-form, iframe[src*="recaptcha"], .g-recaptcha');
     if (blockedUrl || challenge) { state.blocked = true; return { state, anchor: null }; }
-    const root = document.querySelector('#rso') || document.querySelector('#search') ||
-        document.querySelector('main') || document.body;
-    if (!root || !target) return { state, anchor: null };
+    const rootSelector = '#search,#rso,main,[role="main"]';
+    const allRoots = [...document.querySelectorAll(rootSelector)];
+    const roots = allRoots.filter((node) => !allRoots.some((other) => other !== node && other.contains(node)));
+    if (!roots.length && document.body) roots.push(document.body);
+    if (!roots.length || !target) return { state, anchor: null };
 
-    const headingSelector = 'h3,h2,[role="heading"]';
+    const headingSelector = 'h3,h2,h1,[role="heading"]';
+    const linkSelector = 'a[href],a[data-href],a[data-url],a[data-rw],a[data-pcu],a[data-amp-cur],[role="link"]';
+    const outsideResults = 'nav,header,footer,[role="navigation"],[role="menu"],[role="menubar"],[role="dialog"]';
     function rendered(node) {
-        if (!node || !node.isConnected || !node.getClientRects().length) return false;
+        if (!node || !node.isConnected || node.closest('[hidden],[aria-hidden="true"]')) return false;
         const style = getComputedStyle(node);
-        return style.visibility !== 'hidden' && style.display !== 'none';
+        if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') return false;
+        if ([...node.getClientRects()].some((rect) => rect.width && rect.height)) {
+            return typeof node.checkVisibility !== 'function' || node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+        }
+        // display:contents has no box of its own, but its title remains visible.
+        if (style.display !== 'contents') return false;
+        if ([...node.children].some(rendered)) return true;
+        const range = document.createRange(); range.selectNodeContents(node);
+        return [...range.getClientRects()].some((rect) => rect.width && rect.height);
     }
-    function cardFor(anchor) {
+    function headingLink(heading) {
+        return heading.closest(linkSelector) || heading.querySelector(linkSelector);
+    }
+    const citationSelector = 'cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b,span,div';
+    function targetCitation(node) {
+        const value = clean(node.textContent || node.getAttribute('data-dtld'));
+        if (!value || value.length > 320 || !displayedHost(value)) return false;
+        if (!node.matches('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b')) {
+            // Ordinary URL labels must not be mentions inside snippets.
+            if (node.closest('p') || node.querySelector(headingSelector + ',p') ||
+                !/^(?:https?:\/\/|\/\/)?[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+(?:\/?(?:\s*[›»>|]|\s*$)|\/\S*)/u.test(value)) return false;
+        }
+        return rendered(node);
+    }
+    function hasTargetCitation(card) {
+        return [...card.querySelectorAll(citationSelector)].some(targetCitation);
+    }
+    function cardFor(anchor, ownedHeading) {
         let card = anchor;
         // Associate a sibling citation/snippet with this title, without
         // climbing into the whole result list and borrowing another site's text.
         for (let current = anchor.parentElement, depth = 0;
-            current && current !== root && depth < 9; current = current.parentElement, depth++) {
-            const otherTitles = [...current.querySelectorAll(headingSelector)].filter((heading) => {
-                const other = heading.closest('a[href],a[data-href],a[data-url]');
+            current && !current.matches(rootSelector) && depth < 9; current = current.parentElement, depth++) {
+            const titles = [...current.querySelectorAll(headingSelector)];
+            if (current.matches(headingSelector)) titles.push(current);
+            const otherTitles = titles.filter((heading) => {
+                if (heading === ownedHeading) return false;
+                const other = headingLink(heading);
                 return other && other !== anchor;
             });
             if (otherTitles.length) break;
@@ -100,21 +146,22 @@ function recognizeGoogleResults(targetHost, query = '') {
     }
     const records = [], seen = new Set();
     let winner = null;
-    const anchors = [...root.querySelectorAll('a[href],a[data-href],a[data-url]')];
+    const anchors = [...new Set(roots.flatMap((root) => [...root.querySelectorAll(linkSelector)]))];
     for (const anchor of anchors) {
+        if (anchor.closest(outsideResults)) continue;
+        if (anchor.matches('[disabled],[aria-disabled="true"]')) continue;
         if (!rendered(anchor)) continue;
-        const heading = anchor.querySelector(headingSelector);
+        const heading = anchor.querySelector(headingSelector) || anchor.closest(headingSelector);
         const url = anchorDestination(anchor);
         const direct = url && matchesHost(host(url.href));
         // Most Google anchors are menus, tools or media controls. Do not walk
         // their ancestors or read their layout on every document mutation.
         if (!heading && !direct) continue;
         const card = cardFor(anchor);
-        const citations = [...card.querySelectorAll('cite,[data-dtld]')];
-        const citedTarget = citations.some((node) => rendered(node) && displayedHost(text(node) || node.getAttribute('data-dtld')));
+        const citedTarget = hasTargetCitation(card);
         // Headingless mobile/accessible layouts still need a citation in the
         // same small card. A target-domain navigation/footer link is not a SERP.
-        const citationTitle = !heading && !card.querySelector(headingSelector) && citations.length && text(anchor).length >= 8 &&
+        const citationTitle = !heading && !card.querySelector(headingSelector) && citedTarget && text(anchor).length >= 8 &&
             !anchor.querySelector('cite') && !/^(cached|translate|more|next|previous)$/i.test(text(anchor));
         if (!heading && !citationTitle) continue;
         if (sponsored(card)) continue;
@@ -125,29 +172,69 @@ function recognizeGoogleResults(targetHost, query = '') {
             organicIndex = records.length;
             records.push({ key, title });
         }
-        if (direct || citedTarget) {
+        const unresolved = citedTarget && url && google(url.hostname) && /^\/(?:search|url)\/?$/.test(url.pathname);
+        if (direct || (citedTarget && (!url || google(url.hostname)))) {
             state.targetTextSeen = true;
             state.candidateText = title;
         }
-        // Visible domain text corroborates a URL; it never grants permission to
-        // click a different host, an ad, a JavaScript URL or an opaque redirect.
-        if (!direct || !url || google(url.hostname) || seen.has(key)) continue;
+        // A verified publisher label can activate its own Google result when
+        // Google resolves the destination on click. Never invent an article
+        // URL, accept a different publisher, or activate a JavaScript URL.
+        if ((!direct && !unresolved) || !url || seen.has(key)) continue;
         seen.add(key);
         const score = (heading ? 100 : 0) + relevance(title) * 100 +
             relevance(text(card)) * 20 + (citedTarget ? 10 : 0);
-        if (!winner || score > winner.score) winner = { anchor, url: url.href, title, organicIndex, score };
+        if (!winner || score > winner.score) winner = { anchor, url: direct ? url.href : undefined,
+            unresolved: !direct, title, organicIndex, score };
     }
     state.observedResults = records.length;
     state.signature = records.slice(0, 40).map((record) => record.key + '|' + record.title).join('||');
+    if (!state.targetTextSeen) {
+        // A visible publisher/title can precede the anchor itself. Lock its
+        // page now so later href hydration cannot be discarded by pagination.
+        for (const node of roots.flatMap((root) => [...root.querySelectorAll(citationSelector)])) {
+            if (node.closest(outsideResults) || !targetCitation(node)) continue;
+            for (let parent = node.parentElement, depth = 0;
+                parent && !parent.matches(rootSelector) && depth < 9; parent = parent.parentElement, depth++) {
+                const heading = parent.querySelector(headingSelector);
+                if (!heading) continue;
+                const card = cardFor(node, heading), link = headingLink(heading);
+                const url = link && anchorDestination(link);
+                if (rendered(heading) && !sponsored(card) && (!url || google(url.hostname) || matchesHost(host(url.href)))) {
+                    state.targetTextSeen = true;
+                    state.candidateText = text(heading);
+                }
+                break;
+            }
+            if (state.targetTextSeen) break;
+        }
+    }
+    state.pendingResults = roots.some((root) => [...root.querySelectorAll('[aria-busy="true"],[role="progressbar"]')]
+        .some(rendered)) || roots.some((root) => root.getAttribute('aria-busy') === 'true');
+    for (const link of document.querySelectorAll('a[href]')) {
+        const url = destination(link.getAttribute('href'));
+        if (url && google(url.hostname) && url.pathname === '/search' &&
+            url.searchParams.get('q') === new URL(location.href).searchParams.get('q') &&
+            Number(url.searchParams.get('start') || 0) > Number(new URL(location.href).searchParams.get('start') || 0) && rendered(link)) {
+            state.nextPage = true; break;
+        }
+    }
+    const footer = document.querySelector('#nav,#foot,#botstuff');
+    state.paginationRendered = state.nextPage || Boolean(footer && rendered(footer));
     if (winner) {
         // Scroll before calculating native coordinates. Results below the fold
         // can be recognized immediately and must not receive off-screen clicks.
         winner.anchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-        const rect = winner.anchor.getBoundingClientRect();
+        let rect = winner.anchor.getBoundingClientRect();
+        if (!rect.width || !rect.height) {
+            const range = document.createRange(); range.selectNodeContents(winner.anchor);
+            rect = range.getBoundingClientRect();
+        }
         const x = Math.max(1, Math.min(innerWidth - 1, rect.left + rect.width / 2));
         const y = Math.max(1, Math.min(innerHeight - 1, rect.top + rect.height / 2));
         const hit = document.elementFromPoint(x, y);
         state.match = { url: winner.url, title: winner.title, organicIndex: winner.organicIndex,
+            unresolved: winner.unresolved, displayedHost: target,
             clickPoint: hit && winner.anchor.contains(hit) ? { x, y } : undefined };
     }
     return { state, anchor: winner && winner.anchor };
@@ -159,22 +246,31 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
     const watcher = { state: null, key: target + '|' + query, click, stop, scan };
     function scan() {
         scheduled = null;
-        if (stopped || watcher.state?.match) return;
+        if (stopped || (watcher.state?.match && !watcher.state.match.unresolved)) return;
         const result = recognizeGoogleResults(target, query);
         watcher.state = result.state;
         matchedAnchor = result.anchor;
         const next = JSON.stringify(watcher.state);
         if (next !== fingerprint) { fingerprint = next; publish(watcher.state); }
-        if (result.state.match || result.state.blocked) {
+        if ((result.state.match && !result.state.match.unresolved) || result.state.blocked) {
             observer.disconnect();
             clearInterval(heartbeat);
         }
     }
     function schedule() {
-        if (!stopped && !scheduled && !watcher.state?.match) scheduled = setTimeout(scan, 60);
+        if (!stopped && !scheduled && (!watcher.state?.match || watcher.state.match.unresolved)) scheduled = setTimeout(scan, 60);
     }
     function click() {
-        if (stopped || !matchedAnchor?.isConnected || !watcher.state?.match) return false;
+        if (stopped) return false;
+        if (!matchedAnchor?.isConnected) {
+            // Hydration/click handlers can replace the title after recognition.
+            // Activate the current result element instead of a detached node.
+            const result = recognizeGoogleResults(target, query);
+            watcher.state = result.state;
+            matchedAnchor = result.anchor;
+            publish(watcher.state);
+        }
+        if (!matchedAnchor?.isConnected || !watcher.state?.match) return false;
         matchedAnchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
         matchedAnchor.target = '_self';
         matchedAnchor.focus({ preventScroll: true });
@@ -191,7 +287,8 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
     const observer = new MutationObserver(schedule);
     // Observe document itself so this also works before <html>/<body> exist.
     observer.observe(document, { childList: true, subtree: true, characterData: true,
-        attributes: true, attributeFilter: ['href', 'data-href', 'data-url', 'class', 'style', 'hidden'] });
+        attributes: true, attributeFilter: ['href', 'data-href', 'data-url', 'data-rw', 'data-pcu', 'data-amp-cur',
+            'data-dtld', 'aria-busy', 'aria-disabled', 'aria-label', 'role', 'class', 'style', 'hidden'] });
     heartbeat = setInterval(schedule, 500);
     document.addEventListener('readystatechange', schedule);
     window.__domGoogleWatcher = watcher;
@@ -207,7 +304,7 @@ if (typeof process !== 'undefined' && process.type === 'renderer') {
         active = config;
         if (!config) return;
         const current = new URL(location.href);
-        if (!/(^|\.)google\.[a-z.]+$/i.test(current.hostname) || current.pathname !== '/search' ||
+        if (!/(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(current.hostname) || current.pathname !== '/search' ||
             current.searchParams.get('q') !== config.query ||
             (current.searchParams.get('start') || '0') !== config.start) return;
         installGoogleResultObserver(config.target, config.query, (state) => {
