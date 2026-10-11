@@ -39,7 +39,7 @@ Unfinished observations keep their document and live observer, then resume withi
 250 ms instead of sleeping for 30 seconds and reloading. This also preserves
 publisher/title text while its anchor arrives after the initial observation.
 Scan errors are reported in SEO results instead of silently leaving a browser
-at Waiting/Scanning. Unmatched scans report counts of target links rejected as invisible, navigation/disabled, missing titles or sponsored in the SEO results Action message.
+at Waiting/Scanning. Unmatched scans report counts of target links rejected as invisible, navigation/disabled, missing titles or sponsored in the SEO results Status message.
 Recognition uses DOM text and links without adding an OCR model.
 
 Native Electron fixtures cover 48 layouts and 16 opening/pagination cases,
