@@ -225,4 +225,12 @@ jobs:
           cd release-linux
           sha256sum *.AppImage *.tar.gz > SHA256SUMS
           cd ..
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$VERIFIED_SOURCE_SHA" --latest=false --title "DOM v0.5.8 for Ubuntu 24.04" --notes "DOM v0.5.8 recognizes target results as they render and opens them without waiting for full page loading. Includes simultaneous keywords, selectable All Working and ProxyScrape Free APIs, editable endpoints, and bounded browser startup preparation. Existing Keep Alive, browser controls and challenge handling are retained. Ubuntu CI verifies unit tests, packaged lifecycle and Google recognition fixtures, AppImage startup, the installed production sandbox, and a paired runtime comparison before publishing. Run deploy/install-ubuntu.sh from your Ubuntu 24.04 x64 desktop as a regular user; SHA-256 verification and desktop service installation are included."
+          target_args=(--target "$VERIFIED_SOURCE_SHA")
+          if [[ "$VERIFIED_SOURCE_SHA" != "$GITHUB_SHA" ]]; then
+            # GITHUB_TOKEN cannot create a tag on another workflow commit.
+            # Historical publication requires a tag created with repository credentials.
+            git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            test "$(git rev-parse "$TAG^{commit}")" = "$VERIFIED_SOURCE_SHA"
+            target_args=(--verify-tag)
+          fi
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.8 for Ubuntu 24.04" --notes "DOM v0.5.8 recognizes target results as they render and opens them without waiting for full page loading. Includes simultaneous keywords, selectable All Working and ProxyScrape Free APIs, editable endpoints, and bounded browser startup preparation. Existing Keep Alive, browser controls and challenge handling are retained. Ubuntu CI verifies unit tests, packaged lifecycle and Google recognition fixtures, AppImage startup, the installed production sandbox, and a paired runtime comparison before publishing. Run deploy/install-ubuntu.sh from your Ubuntu 24.04 x64 desktop as a regular user; SHA-256 verification and desktop service installation are included."
