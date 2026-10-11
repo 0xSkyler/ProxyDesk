@@ -10,6 +10,9 @@ on:
         description: Publish the immutable Linux release after all checks pass
         type: boolean
         default: false
+      verified_run_id:
+        description: Optional successful run to publish without rebuilding its tested artifacts
+        default: ''
       soak_seconds:
         description: Local fixture active seconds per build (60 for CI, 3600+ for soak)
         default: '60'
@@ -26,6 +29,7 @@ concurrency:
 
 jobs:
   build-linux:
+    if: inputs.verified_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -91,7 +95,7 @@ jobs:
           retention-days: 30
 
   compare-runtime:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    if: inputs.verified_run_id == '' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
     needs: build-linux
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -147,28 +151,70 @@ jobs:
           retention-days: 30
 
   publish-linux:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
     needs: [build-linux, compare-runtime]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
+      - name: Select artifacts from a verified run
+        id: verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+        run: |
+          set -euo pipefail
+          RUN_ID="${VERIFIED_RUN_ID:-$GITHUB_RUN_ID}"
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/dom-verified-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/dom-verified-jobs.json
+          node <<'JS'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const run = JSON.parse(fs.readFileSync('/tmp/dom-verified-run.json'));
+          const { jobs } = JSON.parse(fs.readFileSync('/tmp/dom-verified-jobs.json'));
+          assert.equal(run.repository.full_name, process.env.GITHUB_REPOSITORY);
+          assert.equal(run.path, '.github/workflows/build-ubuntu.yml');
+          assert.match(run.head_sha, /^[0-9a-f]{40}$/);
+          for (const name of ['build-linux', 'compare-runtime']) {
+            const job = jobs.find((job) => job.name === name);
+            assert.ok(job && job.status === 'completed' && job.conclusion === 'success', `${name} must pass in the selected run`);
+          }
+          if (process.env.VERIFIED_RUN_ID) {
+            assert.equal(run.status, 'completed');
+            assert.equal(run.conclusion, 'success');
+          } else {
+            assert.equal(run.head_sha, process.env.GITHUB_SHA);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `run_id=${run.id}\nsource_sha=${run.head_sha}\n`);
+          console.log(`Publishing tested artifacts from run ${run.id}, source ${run.head_sha}`);
+          JS
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.verified.outputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:
           name: DOM-v0.5.8-Ubuntu-x64
           path: release-linux
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: DOM-Linux-comparison-report
           path: release-linux
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: DOM-Linux-baseline-comparison
           path: release-linux
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ github.token }}
       - name: Publish verified Linux release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERIFIED_SOURCE_SHA: ${{ steps.verified.outputs.source_sha }}
         run: |
           set -euo pipefail
           TAG="$(node -p 'require("./package.json").linuxRelease')"
@@ -179,4 +225,4 @@ jobs:
           cd release-linux
           sha256sum *.AppImage *.tar.gz > SHA256SUMS
           cd ..
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "DOM v0.5.8 for Ubuntu 24.04" --notes "DOM v0.5.8 recognizes target results as they render and opens them without waiting for full page loading. Includes simultaneous keywords, selectable All Working and ProxyScrape Free APIs, editable endpoints, and bounded browser startup preparation. Existing Keep Alive, browser controls and challenge handling are retained. Ubuntu CI verifies unit tests, packaged lifecycle and Google recognition fixtures, AppImage startup, the installed production sandbox, and a paired runtime comparison before publishing. Run deploy/install-ubuntu.sh from your Ubuntu 24.04 x64 desktop as a regular user; SHA-256 verification and desktop service installation are included."
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$VERIFIED_SOURCE_SHA" --latest=false --title "DOM v0.5.8 for Ubuntu 24.04" --notes "DOM v0.5.8 recognizes target results as they render and opens them without waiting for full page loading. Includes simultaneous keywords, selectable All Working and ProxyScrape Free APIs, editable endpoints, and bounded browser startup preparation. Existing Keep Alive, browser controls and challenge handling are retained. Ubuntu CI verifies unit tests, packaged lifecycle and Google recognition fixtures, AppImage startup, the installed production sandbox, and a paired runtime comparison before publishing. Run deploy/install-ubuntu.sh from your Ubuntu 24.04 x64 desktop as a regular user; SHA-256 verification and desktop service installation are included."
