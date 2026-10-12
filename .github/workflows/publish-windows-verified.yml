@@ -1,0 +1,95 @@
+name: Publish verified DOM Windows installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      verified_run_id:
+        description: Successful native Windows build and installed-test run
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: publish-verified-dom-windows
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify native Windows test evidence
+        id: verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$VERIFIED_RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID" > /tmp/run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID/jobs?per_page=100" > /tmp/jobs.json
+          node <<'JS'
+          const fs = require('node:fs'), assert = require('node:assert/strict');
+          const run = JSON.parse(fs.readFileSync('/tmp/run.json'));
+          const { jobs } = JSON.parse(fs.readFileSync('/tmp/jobs.json'));
+          assert.equal(run.repository.full_name, process.env.GITHUB_REPOSITORY);
+          assert.equal(run.path, '.github/workflows/build-windows.yml');
+          assert.equal(run.status, 'completed');
+          assert.equal(run.conclusion, 'success');
+          assert.match(run.head_sha, /^[0-9a-f]{40}$/);
+          assert.equal(jobs.find(job => job.name === 'build-windows')?.conclusion, 'success');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `run_id=${run.id}\nsource_sha=${run.head_sha}\n`);
+          JS
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.verified.outputs.source_sha }}
+      - name: Verify tagged production inputs
+        id: package
+        run: |
+          set -euo pipefail
+          TAG="$(node -p 'require("./package.json").windowsRelease')"
+          VERSION="$(node -p 'require("./package.json").version')"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+          git diff --exit-code "$TAG^{commit}" HEAD -- src package.json package-lock.json third-party
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: DOM-v${{ steps.package.outputs.version }}-Windows-x64
+          path: release-assets
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify checksums and publish immutable installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.package.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.package.outputs.version }}
+          VERIFIED_SOURCE_SHA: ${{ steps.verified.outputs.source_sha }}
+          VERIFIED_RUN_ID: ${{ steps.verified.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          node <<'JS'
+          const fs = require('node:fs'), assert = require('node:assert/strict');
+          const base = `DOM-v${process.env.RELEASE_VERSION}-Windows-x64`;
+          assert.deepEqual(fs.readdirSync('release-assets').sort(), [`${base}-SHA256SUMS.txt`, `${base}-Setup.exe`].sort());
+          JS
+          cd release-assets
+          sha256sum --check "DOM-v$RELEASE_VERSION-Windows-x64-SHA256SUMS.txt"
+          cd ..
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; it will not be overwritten."
+            exit 0
+          fi
+          cat > /tmp/release-notes.md <<'NOTES'
+          DOM 0.5.12 recovers a lost Google scanner startup handshake or final match report without waiting for Ready or full page loading. Repeated requests preserve the observer and replay a fresh match. Proxy-metadata updates preserve newly edited browser counts and other tracker inputs before Start. Full SEO results Status messages are readable on hover.
+
+          Native Windows validation passes 55 Node tests, 48 recognition layouts, 18 opening/pagination cases, and a 50-browser two-keyword recovery test with all startup handshakes dropped and all Google responses unfinished. Unpacked and freshly installed NSIS applications pass recognition, resizing, cancellation and restart. The released 0.5.11 reproduces the missing-observer loop and input reset.
+
+          The separate publisher-visible unresolved-link case remains unverified; its title-link classifier is unchanged. Target clicks, keywords, proxy providers, rotation and Keep Alive retain their existing behavior.
+          NOTES
+          printf '\nBuilt and installed-tested from %s in https://github.com/%s/actions/runs/%s. Production inputs match the immutable release tag; subsequent source changes only retry transient Windows temporary-test-profile cleanup. SHA-256 verification is included.\n' "$VERIFIED_SOURCE_SHA" "$GITHUB_REPOSITORY" "$VERIFIED_RUN_ID" >> /tmp/release-notes.md
+          gh release create "$RELEASE_TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "DOM v$RELEASE_VERSION for Windows" --notes-file /tmp/release-notes.md
