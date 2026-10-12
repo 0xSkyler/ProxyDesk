@@ -159,3 +159,45 @@ test('queued preload handshakes tolerate disposed native frames during Stop', as
     assert.doesNotThrow(() => wc.emit('ipc-message', {}, 'dom:google-preload-ready'));
     await manager.destroyAll();
 });
+
+test('a missing startup message recovers on the visible page without waiting for load or reloading', async () => {
+    let time = 0;
+    class Clock extends Date { static now() { return time += 1_000; } }
+    const { manager, managed, wc, publish } = await setup({ Date: Clock });
+    const pages = [], requests = [];
+    let scriptCalls = 0;
+    wc.executeJavaScript = () => { scriptCalls++; return new Promise(() => {}); };
+    wc.isLoading = () => true;
+    wc.loadURL = url => { wc.url = url; pages.push(url); return new Promise(() => {}); };
+    wc.send = (channel, config) => {
+        if (channel === 'dom:google-config' && config) {
+            requests.push(config);
+            if (requests.length === 2) setImmediate(() => publish({ observedResults: 1, documentParsed: false,
+                match: { url: 'https://appareldiary.com/article', title: 'Visible result', organicIndex: 0 } }));
+        }
+        if (channel === 'dom:google-click') wc.url = 'https://appareldiary.com/article';
+    };
+    const token = manager.startMeasurementSession(1);
+    const result = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+    assert.equal(result.interactionStatus, 'opened');
+    assert.equal(pages.length, 1);
+    assert.equal(scriptCalls, 0);
+    assert.ok(requests.length >= 2);
+    assert.equal(new Set(requests.map(config => config.navigation)).size, 1);
+    assert.equal(managed.googleState.match.url, result.matchedUrl);
+    await manager.destroyAll();
+});
+
+test('current-frame messages are accepted across wrapper objects with the same native frame IDs', async () => {
+    const { manager, managed, wc } = await setup();
+    const token = manager.startMeasurementSession(1);
+    wc.mainFrame = { processId: 7, routingId: 12 };
+    wc.url = 'https://www.google.com/search?q=first';
+    managed.googleConfig = { navigation: 9, token, target: 'example.test', query: 'first', start: '0' };
+    const payload = { navigation: 9, token, documentUrl: wc.url, state: { observedResults: 1 } };
+    wc.emit('ipc-message', { senderFrame: { processId: 7, routingId: 13 } }, 'dom:google-state', payload);
+    assert.equal(managed.googleState, undefined);
+    wc.emit('ipc-message', { senderFrame: { processId: 7, routingId: 12 } }, 'dom:google-state', payload);
+    assert.equal(managed.googleState.observedResults, 1);
+    await manager.destroyAll();
+});

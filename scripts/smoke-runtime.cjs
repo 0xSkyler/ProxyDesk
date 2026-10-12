@@ -76,6 +76,15 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
         async function startFleet(count) {
             phase = `starting ${count} browsers`;
             await page.getByLabel('Browsers', { exact: true }).fill(String(count));
+            // A proxy-metadata update used to replay the last run's form
+            // values just before Start, losing a newly entered browser count.
+            await page.evaluate(() => window.app.automation.configureProxy({
+                source: document.querySelector('[data-dom-proxy-source]').value,
+                endpoint: document.querySelector('[aria-label="Proxy API URL (editable)"]').value
+            }));
+            await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            assert.equal(await page.getByLabel('Browsers', { exact: true }).inputValue(), String(count),
+                'Proxy metadata overwrote the newly entered browser count');
             const started = Date.now();
             await page.getByRole('button', { name: 'Start SEO Tracker', exact: true }).click();
             const state = await waitForAutomation(page, (value, number) => value.running &&

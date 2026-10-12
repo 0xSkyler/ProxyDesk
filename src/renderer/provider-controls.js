@@ -186,6 +186,12 @@ async function mount() {
     new MutationObserver(() => {
         if (latestState)
             updateSourceCopy(latestState.proxySourceLabel || SOURCE_DEFAULTS[sourceSelect.value].label);
+        // Status cells truncate long diagnostics. Keep their full text
+        // available on hover without changing the recovered table layout.
+        for (const row of document.querySelectorAll('.tracker-results tbody tr')) {
+            const cell = row.cells[2];
+            if (cell && cell.title !== cell.textContent) cell.title = cell.textContent;
+        }
     }).observe(document.querySelector('.seo-tracker'), { childList: true, subtree: true, characterData: true });
     const browserArea = document.querySelector('.lite-browser-area');
     if (browserArea) {

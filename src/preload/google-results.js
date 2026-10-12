@@ -299,10 +299,13 @@ function recognizeGoogleResults(targetHost, query = '') {
 function installGoogleResultObserver(target, query = '', publish = () => {}) {
     window.__domGoogleWatcher?.stop();
     let stopped = false, scheduled = null, heartbeat = null, matchedAnchor = null, fingerprint = '';
-    const watcher = { state: null, key: target + '|' + query, click, stop, scan };
-    function scan() {
+    const observeOptions = { childList: true, subtree: true, characterData: true,
+        attributes: true, attributeFilter: ['href', 'data-href', 'data-url', 'data-rw', 'data-pcu', 'data-amp-cur',
+            'data-dtld', 'aria-busy', 'aria-disabled', 'aria-label', 'role', 'class', 'style', 'hidden'] };
+    const watcher = { state: null, key: target + '|' + query, click, stop, scan, get stopped() { return stopped; } };
+    function scan(force = false) {
         scheduled = null;
-        if (stopped || (watcher.state?.match && !watcher.state.match.unresolved)) return;
+        if (stopped || (!force && watcher.state?.match && !watcher.state.match.unresolved)) return;
         let result;
         try { result = recognizeGoogleResults(target, query); }
         catch (error) {
@@ -318,6 +321,10 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
         if ((result.state.match && !result.state.match.unresolved) || result.state.blocked) {
             observer.disconnect();
             clearInterval(heartbeat);
+            heartbeat = null;
+        } else if (!heartbeat) {
+            observer.observe(document, observeOptions);
+            heartbeat = setInterval(schedule, 500);
         }
     }
     function schedule() {
@@ -349,9 +356,7 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
     }
     const observer = new MutationObserver(schedule);
     // Observe document itself so this also works before <html>/<body> exist.
-    observer.observe(document, { childList: true, subtree: true, characterData: true,
-        attributes: true, attributeFilter: ['href', 'data-href', 'data-url', 'data-rw', 'data-pcu', 'data-amp-cur',
-            'data-dtld', 'aria-busy', 'aria-disabled', 'aria-label', 'role', 'class', 'style', 'hidden'] });
+    observer.observe(document, observeOptions);
     heartbeat = setInterval(schedule, 500);
     document.addEventListener('readystatechange', schedule);
     window.__domGoogleWatcher = watcher;
@@ -363,17 +368,27 @@ if (typeof process !== 'undefined' && process.type === 'renderer') {
     const { ipcRenderer } = require('electron');
     let active = null;
     ipcRenderer.on('dom:google-config', (_event, config) => {
-        window.__domGoogleWatcher?.stop();
-        active = config;
-        if (!config) return;
+        const existing = window.__domGoogleWatcher;
+        if (!config) { existing?.stop(); active = null; return; }
         const current = new URL(location.href);
         if (!/(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(current.hostname) || current.pathname !== '/search' ||
             current.searchParams.get('q') !== config.query ||
-            (current.searchParams.get('start') || '0') !== config.start) return;
-        installGoogleResultObserver(config.target, config.query, (state) => {
-            ipcRenderer.send('dom:google-state', { navigation: config.navigation, token: config.token,
-                documentUrl: location.href, state });
-        });
+            (current.searchParams.get('start') || '0') !== config.start) {
+            existing?.stop(); active = null; return;
+        }
+        const publish = state => ipcRenderer.send('dom:google-state', { navigation: config.navigation, token: config.token,
+            documentUrl: location.href, state });
+        if (active && existing && !existing.stopped && existing.key === config.target + '|' + config.query &&
+            ['navigation', 'token', 'target', 'query', 'start'].every(key => active[key] === config[key])) {
+            // Preserve a live watcher. Only a final-match replay needs a new
+            // scan: its link/coordinates may have moved since the lost report.
+            if (existing.state?.match) existing.scan(true);
+            if (existing.state) publish(existing.state);
+            return;
+        }
+        existing?.stop(); active = config;
+        try { installGoogleResultObserver(config.target, config.query, publish); }
+        catch (error) { publish({ blocked: false, observedResults: 0, recognitionError: 'Scanner startup: ' + String(error.message || error) }); }
     });
     ipcRenderer.on('dom:google-click', (_event, navigation) => {
         if (active?.navigation === navigation) window.__domGoogleWatcher?.click();

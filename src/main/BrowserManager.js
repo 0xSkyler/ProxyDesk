@@ -247,7 +247,13 @@ class BrowserManager extends node_events_1.EventEmitter {
             // messages from this browser's current main frame and search cycle.
             if (managed.disposed || wc.isDestroyed()) return;
             try {
-                if (!event.senderFrame || event.senderFrame !== wc.mainFrame) return;
+                const sender = event.senderFrame, main = wc.mainFrame;
+                // Native frame identity is its process/routing pair. Electron
+                // can provide different JS wrappers for the same frame.
+                if (!sender || (sender !== main &&
+                    (!Number.isInteger(sender.processId) || !Number.isInteger(sender.routingId) ||
+                    sender.processId < 0 || sender.routingId < 0 ||
+                    sender.processId !== main.processId || sender.routingId !== main.routingId))) return;
             } catch {
                 // A queued handshake can outlive its render frame on Stop.
                 return;
@@ -265,10 +271,11 @@ class BrowserManager extends node_events_1.EventEmitter {
             if (url.searchParams.get('q') !== config.query || (url.searchParams.get('start') || '0') !== config.start) return;
             if (config.token != null && !this.isMeasurementSessionCurrent(id, config.token)) return;
             managed.googleState = payload.state;
-            if (payload.state?.observedResults) this.updateState(managed, {
-                loading: false, connectionStatus: 'connected',
-                googleSearchActivity: payload.state.match ? 'opening-target' : 'scanning-results'
-            });
+            if (payload.state?.observedResults) {
+                const activity = payload.state.match ? 'opening-target' : 'scanning-results';
+                if (managed.state.loading || managed.state.connectionStatus !== 'connected' || managed.state.googleSearchActivity !== activity)
+                    this.updateState(managed, { loading: false, connectionStatus: 'connected', googleSearchActivity: activity });
+            }
         });
         wc.on('did-start-loading', () => this.updateState(managed, { loading: true, connectionStatus: 'loading', errorMessage: undefined }));
         wc.on('dom-ready', () => {
@@ -297,8 +304,12 @@ class BrowserManager extends node_events_1.EventEmitter {
         wc.on('did-navigate', (_e, url) => {
             this.updateState(managed, { url });
             this.maybeHandleGoogleBlock(managed, url, options);
+            this.requestGoogleState(managed, true);
         });
-        wc.on('did-navigate-in-page', (_e, url) => this.updateState(managed, { url }));
+        wc.on('did-navigate-in-page', (_e, url) => {
+            this.updateState(managed, { url });
+            this.requestGoogleState(managed, true);
+        });
         wc.on('page-title-updated', (_e, title) => this.updateState(managed, { title }));
         wc.on('page-favicon-updated', (_e, favicons) => this.updateState(managed, { faviconUrl: favicons[0] }));
         wc.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {
@@ -556,6 +567,8 @@ class BrowserManager extends node_events_1.EventEmitter {
         const active = Boolean(managed.googleConfig);
         managed.googleConfig = null;
         managed.googleState = null;
+        managed.googleStateRequestedNavigation = null;
+        managed.googleStateRequestedAt = 0;
         if (managed.state.googleSearchActivity) this.updateState(managed, { googleSearchActivity: undefined });
         if (active && !managed.view.webContents.isDestroyed()) {
             try { managed.view.webContents.send('dom:google-config', null); }
@@ -564,6 +577,25 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     isMeasurementSessionCurrent(id, token) {
         return !this.disposed && this.browsers.has(id) && this.measurementTokens.get(id) === token;
+    }
+    requestGoogleState(managed, force = false) {
+        const config = managed.googleConfig, wc = managed.view.webContents;
+        if (!config || managed.disposed || wc.isDestroyed() ||
+            (config.token != null && !this.isMeasurementSessionCurrent(managed.id, config.token))) return;
+        try {
+            const url = new URL(wc.getURL());
+            if (!isGoogleSearchResultsUrl(url.href) || url.searchParams.get('q') !== config.query ||
+                (url.searchParams.get('start') || '0') !== config.start) return;
+            const now = Date.now();
+            if (!force && managed.googleStateRequestedNavigation === config.navigation &&
+                now - managed.googleStateRequestedAt < 1_000) return;
+            // Sending does not wait for DOMContentLoaded/load. An idempotent
+            // preload request both starts a missing watcher and republishes a
+            // final match whose first report was lost or rejected in transit.
+            wc.send('dom:google-config', config);
+            managed.googleStateRequestedNavigation = config.navigation;
+            managed.googleStateRequestedAt = now;
+        } catch { /* A navigation can dispose the frame; the next poll retries. */ }
     }
     async broadcastSearch(id, query, targetWebsite, maxPages = 20, measurementToken) {
         const managed = this.get(id);
@@ -625,6 +657,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             while (Date.now() < deadline) {
                 if (measurementToken != null && !this.isMeasurementSessionCurrent(id, measurementToken)) return;
                 const current = wc.getURL();
+                this.requestGoogleState(managed);
                 if (extractGoogleBlockContinueUrl(current) || managed.googleState) return;
                 if (loadError) break;
                 await delay(25);
@@ -709,6 +742,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                         ranAt
                     };
                 }
+                this.requestGoogleState(managed);
                 const activeUrl = wc.getURL();
                 if (extractGoogleBlockContinueUrl(activeUrl)) {
                     this.stopGoogleRecognition(managed);

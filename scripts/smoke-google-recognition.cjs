@@ -104,12 +104,23 @@ let application;
             manager.attachWindow(window);
             const timers = new Set();
             const stats = { cases: [], progressive: {}, late: {}, cancellation: {} };
-            let body = '', mode = 'static', phase = 'initialization', googleDomReady = false, googleLoadFinished = false, googleMatch = null, targetDomReady = false, targetRequests = 0, pages = [];
+            let body = '', mode = 'static', phase = 'initialization', googleDomReady = false, googleLoadFinished = false, googleMatch = null, targetDomReady = false, targetRequests = 0, pages = [], lostMatchReport = false;
             function later(fn, ms) { const timer = setTimeout(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); }
             try {
                 await manager.createBrowser(901, { startPage: 'about:blank', persistSessions: false });
                 const managed = manager.get(901), wc = managed.view.webContents;
                 managed.view.setBounds({ x: 0, y: 0, width: 900, height: 680 });
+                const managerIpc = wc.listeners('ipc-message')[0];
+                wc.removeListener('ipc-message', managerIpc);
+                wc.on('ipc-message', (event, channel, payload) => {
+                    // Reproduce the reported missing-observer state in the real
+                    // BrowserView transport, without altering the recognizer.
+                    if (mode === 'lostHandshake' && channel === 'dom:google-preload-ready') return;
+                    if (mode === 'lostMatchReport' && channel === 'dom:google-state' && payload.state?.match && !lostMatchReport) {
+                        lostMatchReport = true; return;
+                    }
+                    managerIpc(event, channel, payload);
+                });
                 wc.on('preload-error', (_event, file, error) => { throw new Error(`Preload failed ${file}: ${error.message}`); });
                 wc.on('dom-ready', () => {
                     if (wc.getURL().includes('google.com')) googleDomReady = true;
@@ -176,9 +187,9 @@ let application;
                 // Drain the completed static fixture's navigation before
                 // measuring never-ending responses in the following cases.
                 await wc.loadURL('about:blank');
-                for (const scenario of ['progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
+                for (const scenario of ['lostHandshake', 'lostMatchReport', 'progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
                     phase = scenario;
-                    mode = scenario; body = fixtures.resultCard; googleDomReady = false; googleLoadFinished = false; googleMatch = null; targetDomReady = false; pages = [];
+                    mode = scenario; body = fixtures.resultCard; googleDomReady = false; googleLoadFinished = false; googleMatch = null; targetDomReady = false; pages = []; lostMatchReport = false;
                     if (scenario === 'fallback') body = body.replace('<a href=', '<a onclick="return false" href=');
                     if (scenario === 'linkUpdate') body = body.replace(`href="${fixtures.article}"`, 'id="late-target" href="#"') +
                         `<script>window.__domGoogleWatcher = { state: { match: { url: 'https://competitor.test/' } } }; setTimeout(() => document.getElementById('late-target').href = ${JSON.stringify(fixtures.article)}, 400);</script>`;
@@ -224,6 +235,42 @@ let application;
                 await new Promise((resolve) => later(resolve, 500));
                 stats.cancellation = { targetRequests: targetRequests - before, configCleared: managed.googleConfig === null };
                 if (stats.cancellation.targetRequests || !stats.cancellation.configCleared) throw new Error('Cancelled watcher clicked a target');
+                phase = '50 concurrent browsers with missing startup messages';
+                const fleet = new BrowserManager(); fleet.attachWindow(window);
+                window.setMaxListeners(110);
+                try {
+                    const { BrowserPreparation } = load(load('node:path').join(global.__domRecognitionRoot, 'src/main/BrowserPreparation.js'));
+                    const ids = await new BrowserPreparation(fleet).ensure(50);
+                    const evidence = new Map();
+                    for (const id of ids) {
+                        const browser = fleet.get(id), contents = browser.view.webContents;
+                        browser.view.setBounds({ x: 0, y: 0, width: 900, height: 680 });
+                        const handler = contents.listeners('ipc-message')[0];
+                        contents.removeListener('ipc-message', handler);
+                        contents.on('ipc-message', (event, channel, payload) => {
+                            if (channel === 'dom:google-preload-ready') return;
+                            if (channel === 'dom:google-state' && payload.state?.match)
+                                evidence.set(id, { loading: contents.isLoading(), parsed: payload.state.documentParsed });
+                            handler(event, channel, payload);
+                        });
+                        browser.session.protocol.handle('https', request => new Response(new ReadableStream({
+                            start(controller) {
+                                const google = new URL(request.url).hostname === 'www.google.com';
+                                const content = google ? `<main id="search"><div class="MjjYud"><cite>appareldiary.com</cite><a href="https://appareldiary.com/fixture/${id}"><h3>${fixtures.title}</h3></a></div></main>` : '<h1>Target article</h1>';
+                                controller.enqueue(encoder.encode('<!doctype html><html><head><link rel="icon" href="data:,"></head><body>' + content));
+                            }
+                        }), { headers: { 'Content-Type': 'text/html', 'Cross-Origin-Opener-Policy': 'same-origin', 'Origin-Agent-Cluster': '?1' } }));
+                    }
+                    const started = Date.now();
+                    const results = await Promise.all(ids.map(id => fleet.broadcastSearch(id,
+                        id % 2 ? 'kanban pull system cutting sewing' : 'access control and visitor management for apparel export factories',
+                        'appareldiary.com', 5, fleet.startMeasurementSession(id))));
+                    stats.concurrent = { count: ids.length, elapsedMs: Date.now() - started,
+                        opened: results.filter(result => result.interactionStatus === 'opened').length,
+                        beforeLoad: ids.filter(id => evidence.get(id)?.loading && !evidence.get(id)?.parsed).length };
+                    if (stats.concurrent.opened !== 50 || stats.concurrent.beforeLoad !== 50 || results.some(result => result.resultPage !== 1))
+                        throw new Error('Concurrent recovery failed: ' + JSON.stringify(stats.concurrent));
+                } finally { await fleet.destroyAll(); }
                 return stats;
             } catch (error) {
                 throw new Error(`${phase}: ${error.message}; evidence: ${JSON.stringify(stats)}`);
@@ -232,8 +279,10 @@ let application;
                 await manager.destroyAll();
                 window.destroy();
             }
-        }, { cases, title, article, resultCard: card(article) }), 110_000, 'Native Google recognition');
+        }, { cases, title, article, resultCard: card(article) }), 160_000, 'Native Google recognition');
         assert.equal(report.cases.length, cases.length);
+        assert.ok(report.lostHandshake.elapsedMs < 3_000);
+        assert.ok(report.lostMatchReport.elapsedMs < 3_000);
         assert.ok(report.progressive.elapsedMs < 3_000);
         assert.ok(report.late.elapsedMs < 7_000);
         assert.ok(report.veryLate.elapsedMs > 12_000 && report.veryLate.elapsedMs < 17_000);

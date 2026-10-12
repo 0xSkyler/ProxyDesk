@@ -1,4 +1,4 @@
-# DOM v0.5.11
+# DOM v0.5.12
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -42,14 +42,32 @@ Scan errors are reported in SEO results instead of silently leaving a browser
 at Waiting/Scanning. Unmatched scans report counts of target links rejected as invisible, navigation/disabled, missing titles or sponsored in the SEO results Status message.
 Recognition uses DOM text and links without adding an OCR model.
 
-Native Electron fixtures cover 48 layouts and 16 opening/pagination cases,
+The main process requests scanner state after navigation and retries once per
+second while monitoring. Repeated requests preserve the existing observer and
+replay a fresh match rather than rebuilding it. Main-frame messages use Electron's
+native process/routing identity, with navigation, query and run-token checks still
+required. This recovers a lost startup handshake or final match report without
+waiting for Ready or reloading the current results. Hover over a clipped SEO
+results Status cell to read its complete diagnostic message.
+
+Native Electron fixtures cover 48 layouts and 18 opening/pagination cases,
 including targets appended after DOMContentLoaded, click-resolved destinations,
 replaced links, visible accessibility copies, headingless titles, results/anchors
 arriving after 13 seconds, loads that never complete, offscreen links and cancellation. Run
 `node scripts/smoke-google-recognition.cjs` from a graphical desktop (or under
-Xvfb). Pass a packaged executable to validate the shipped preload and recognizer.
+Xvfb). The same check also opens targets in 50 concurrent browsers with two
+keywords, drops every startup handshake and keeps all Google responses unfinished.
+Pass a packaged executable to validate the shipped preload and recognizer.
+
+The missing-observer failure is reproduced in v0.5.11 and recovered in v0.5.12
+under controlled transport fault injection. The separate user session reporting
+“the target publisher is visible” has not been reproduced; this release does not
+change the title-link classifier or claim that unresolved-link case is fixed.
 
 ## Browser startup
+
+Proxy-metadata updates preserve edited tracker inputs. They do not restore the
+previous run's browser count, keywords or timing just before Start.
 
 Increasing the browser count now prepares new workspaces two at a time rather
 than starting every Chromium renderer and storage context together. The dashboard
@@ -90,7 +108,7 @@ new portion of a stable provider list instead of reusing its first entries.
 
 ### Windows download
 
-[Download DOM v0.5.11 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.11/DOM-v0.5.11-Windows-x64-Setup.exe)
+[Download DOM v0.5.12 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.12/DOM-v0.5.12-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -108,7 +126,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.11-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.12-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -131,14 +149,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.11-linux-x86_64.AppImage
-./DOM-v0.5.11-linux-x86_64.AppImage
+chmod +x DOM-v0.5.12-linux-x86_64.AppImage
+./DOM-v0.5.12-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.11-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.12-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -153,7 +171,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.11-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.12-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -169,7 +187,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.11-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.12-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -193,7 +211,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch CI publishes the immutable `v0.5.11-linux.1` release only after native
+Main-branch CI publishes the immutable `v0.5.12-linux.1` release only after native
 build, packaged smoke tests and original/optimized fixture comparison succeed.
 The original Windows release is retained. The installer checks host prerequisites;
 the target VPS's display, sandbox configuration and live proxy/search behavior

@@ -1,4 +1,4 @@
-name: DOM v0.5.11 Windows build and release
+name: DOM v0.5.12 Windows build and release
 
 on:
   pull_request:
@@ -40,8 +40,8 @@ jobs:
       - name: Install into a clean directory
         shell: pwsh
         run: |
-          $installer = Resolve-Path 'release-windows/DOM-v0.5.11-Windows-x64-Setup.exe'
-          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.11-installed'
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.12-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.12-installed'
           $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
           $installedExecutable = Join-Path $installDirectory 'DOM.exe'
@@ -56,15 +56,15 @@ jobs:
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $installer = Get-Item 'release-windows/DOM-v0.5.11-Windows-x64-Setup.exe'
+          $installer = Get-Item 'release-windows/DOM-v0.5.12-Windows-x64-Setup.exe'
           $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
-          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.11-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.12-Windows-x64-SHA256SUMS.txt' -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: DOM-v0.5.11-Windows-x64
+          name: DOM-v0.5.12-Windows-x64
           path: |
-            release-windows/DOM-v0.5.11-Windows-x64-Setup.exe
-            release-windows/DOM-v0.5.11-Windows-x64-SHA256SUMS.txt
+            release-windows/DOM-v0.5.12-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.12-Windows-x64-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.11-Windows-x64
+          name: DOM-v0.5.12-Windows-x64
           path: release-assets
       - name: Publish verified Windows release
         env:
@@ -90,5 +90,5 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
           else
-            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.11 for Windows" --notes "DOM v0.5.11 recognizes combined publisher, breadcrumb and visual-title links even without heading tags. Ad checks stay within the result module, so unrelated Sponsored labels do not suppress organic results. Rendered children remain recognizable when a link has no box or CSS overrides a hidden attribute. Verified publisher/title links whose href is supplied on activation are supported. Keyword relevance ranks title candidates above incidental heading tags. Visible publisher text retains the current page while its title hydrates. Diagnostic rejection counts appear in SEO results. Verified targets activate while Google and its AI Overview are still loading; actual target landing is checked before Keep Alive. Existing keyword, proxy-source, rotation and Keep Alive behavior is retained. Native Windows tests verify 48 layouts, 16 opening/pagination scenarios, cancellation and 20-browser startup in unpacked and freshly installed applications. SHA-256 verification is included. These are controlled browser fixtures; the exact user Google session has not been verified."
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.12 for Windows" --notes "DOM v0.5.12 recovers the scanner when its one-time startup handshake or final match report is lost. Configuration requests preserve the live observer and replay a fresh match; main-frame validation uses native process/routing identity while keeping navigation, query and run-token checks. Targets activate before Google finishes loading. Full SEO results Status messages are available on hover. Proxy-metadata updates preserve newly edited tracker inputs instead of replaying the previous run settings just before Start. The title-link classifier, keyword assignment, proxy providers, rotation and Keep Alive behavior are unchanged. Native tests cover 48 layouts, 18 opening/pagination scenarios and a 50-browser two-keyword recovery test with every startup handshake dropped and every Google response unfinished. The missing-observer loop was reproduced in v0.5.11 using transport fault injection. The separate reported publisher-visible unresolved-link case has not been reproduced and is not claimed fixed. Native Windows validation also installs the NSIS package into a clean directory and runs lifecycle and recognition tests in the installed app. A SHA-256 manifest is included."
           fi
