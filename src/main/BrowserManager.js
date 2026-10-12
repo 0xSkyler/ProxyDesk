@@ -543,12 +543,10 @@ class BrowserManager extends node_events_1.EventEmitter {
         }
     }
     /**
-     * Runs one browser's measurement-only Google scan. It loads result pages,
-     * watches progressively-rendered organic results, and records a target
-     * match without clicking it. Challenge pages are reported as a paused
-     * observation so the session monitor can wait for normal results to return.
-     *
-     * This keeps SEO measurement separate from generated site engagement.
+     * Starts a cancellable Google result session. Its search watches results
+     * as they appear, clicks the matching result's actual title, and verifies
+     * landing on the target website. Challenges pause the session until normal
+     * results return.
      */
     startMeasurementSession(id) {
         const token = (this.measurementTokens.get(id) ?? 0) + 1;
@@ -888,43 +886,8 @@ class BrowserManager extends node_events_1.EventEmitter {
                                 monitoring: true, interactionStatus: 'click-failed', keepAliveStarted: false,
                                 error: 'The target publisher is visible, but Google did not resolve or open its title link. DOM will retry this page without paginating.', ranAt };
                         }
-                        // DOM/native activation can be ignored by some Google result
-                        // layouts. The final fallback uses ONLY the exact URL captured
-                        // from the matched Google card; no destination is constructed.
-                        if (isGoogleSearchResultsUrl(wc.getURL()) &&
-                            (!measurementToken || this.isMeasurementSessionCurrent(id, measurementToken))) {
-                            void wc.loadURL(matched.url).catch(() => undefined);
-                        }
-                        const fallbackDeadline = Date.now() + 5_000;
-                        while (Date.now() < fallbackDeadline) {
-                            if (measurementToken != null && !this.isMeasurementSessionCurrent(id, measurementToken)) {
-                                return { browserId: id, status: 'monitoring', landedUrl: wc.getURL(), monitoring: true, ranAt };
-                            }
-                            try {
-                                const current = wc.getURL();
-                                if ((0, seo_1.hostMatchesTarget)(current, targetHost)) {
-                                    totalScanned += pageMaxObserved;
-                                    return {
-                                        browserId: id,
-                                        status: 'matched',
-                                        landedUrl: current,
-                                        matchedUrl: matched.url,
-                                        matchedTitle: matched.title,
-                                        resultsScanned: totalScanned,
-                                        position: pageIndex * 10 + matched.organicIndex + 1,
-                                        resultPage: pageIndex + 1,
-                                        monitoring: true,
-                                        interactionStatus: 'opened',
-                                        keepAliveStarted: false,
-                                        ranAt
-                                    };
-                                }
-                            }
-                            catch {
-                                // Navigation is still settling.
-                            }
-                            await delay(100);
-                        }
+                        // Success must follow a click on this Google result's
+                        // title. An ignored click remains an explicit failure.
                         totalScanned += pageMaxObserved;
                         return {
                             browserId: id,
@@ -937,7 +900,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                             resultPage: pageIndex + 1,
                             monitoring: true,
                             interactionStatus: 'click-failed',
-                            error: 'Target appeared in Google, but navigation to the detected result did not complete.',
+                            error: 'Target appeared in Google, but clicking its result title did not open the target website.',
                             keepAliveStarted: false,
                             ranAt
                         };
@@ -1122,6 +1085,8 @@ class BrowserManager extends node_events_1.EventEmitter {
             return false;
         try {
             const scan = (await wc.executeJavaScript(buildGoogleResultScanScript(normalizedHost, query), true));
+            if (!this.isMeasurementSessionCurrent(id, measurementToken))
+                return false;
             if (!scan.match || !scan.match.url)
                 return false;
             const matchHost = new URL(scan.match.url).hostname.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
@@ -1158,7 +1123,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 }
             }
             // One DOM-level retry is allowed if the native event was ignored.
-            if (isGoogleSearchResultsUrl(wc.getURL())) {
+            if (isGoogleSearchResultsUrl(wc.getURL()) && this.isMeasurementSessionCurrent(id, measurementToken)) {
                 const clicked = (await wc.executeJavaScript(buildClickGoogleTargetResultScript(normalizedHost, query), true).catch(() => false));
                 if (clicked) {
                     const retryDeadline = Date.now() + 5_000;
@@ -1175,28 +1140,6 @@ class BrowserManager extends node_events_1.EventEmitter {
                         }
                         await delay(100);
                     }
-                }
-            }
-            // Final controlled-test fallback: navigate only to the exact URL that
-            // was detected in Google's result card. This never constructs or guesses
-            // a destination, and the exact-host check above already guarantees the
-            // URL belongs to the configured controlled test environment.
-            if (isGoogleSearchResultsUrl(wc.getURL()) &&
-                this.isMeasurementSessionCurrent(id, measurementToken)) {
-                void wc.loadURL(expectedUrl).catch(() => undefined);
-                const fallbackDeadline = Date.now() + 6_000;
-                while (Date.now() < fallbackDeadline) {
-                    if (!this.isMeasurementSessionCurrent(id, measurementToken))
-                        return false;
-                    try {
-                        const host = new URL(wc.getURL()).hostname.toLowerCase().replace(/^www\./, '').replace(/\.$/, '');
-                        if (host === normalizedHost)
-                            return true;
-                    }
-                    catch {
-                        // Keep waiting while navigation settles.
-                    }
-                    await delay(100);
                 }
             }
         }

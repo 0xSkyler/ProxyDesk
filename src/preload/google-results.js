@@ -22,6 +22,9 @@ function recognizeGoogleResults(targetHost, query = '') {
             (!target.includes('.') && value.split('.').includes(target))));
     }
     function google(value) { return /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(value); }
+    function googleTitleRoute(url) {
+        return Boolean(url && google(url.hostname) && /^\/(?:search|url|goto)\/?$/.test(url.pathname));
+    }
     function decodeDestination(value) {
         let decoded = clean(value);
         // Decode wrappers, without changing escapes in an already valid URL.
@@ -40,10 +43,11 @@ function recognizeGoogleResults(targetHost, query = '') {
                     continue;
                 }
                 // A search query is not a redirect URL. Only unwrap link routes.
-                if (!/^\/(url|imgres|aclk|interstitial|local_url)\/?$/.test(url.pathname)) break;
+                if (!/^\/(url|goto|imgres|aclk|interstitial|local_url)\/?$/.test(url.pathname)) break;
                 const next = url.searchParams.get('url') || url.searchParams.get('q') ||
                     url.searchParams.get('adurl') || url.searchParams.get('imgurl');
                 const decoded = decodeDestination(next);
+                if (/^[a-z][a-z0-9+.-]*:/i.test(decoded) && !/^https?:\/\//i.test(decoded)) return null;
                 if (!/^(?:https?:)?\/\//i.test(decoded)) break;
                 url = new URL(decoded, url.href);
             }
@@ -220,7 +224,7 @@ function recognizeGoogleResults(targetHost, query = '') {
         }
         if (!rendered(anchor)) { if (direct && !publisherCard) state.diagnostics.hidden++; return 'hidden-link'; }
         const heading = ownedHeading || anchor.querySelector(headingSelector) || anchor.closest(headingSelector);
-        const googleRoute = url && google(url.hostname) && /^\/(?:search|url)\/?$/.test(url.pathname);
+        const googleRoute = googleTitleRoute(url);
         if (!heading && !direct && !googleRoute) return 'unsupported-link';
         const label = text(anchor) || clean(anchor.getAttribute('aria-label'));
         const styledTitle = !heading && visualTitle(anchor);
@@ -254,7 +258,7 @@ function recognizeGoogleResults(targetHost, query = '') {
             organicIndex = records.length;
             records.push({ key, title });
         }
-        const unresolved = citedTarget && url && google(url.hostname) && /^\/(?:search|url)\/?$/.test(url.pathname);
+        const unresolved = citedTarget && googleTitleRoute(url);
         if (direct || (citedTarget && (!url || google(url.hostname)))) {
             state.targetTextSeen = true;
             state.candidateText = title;

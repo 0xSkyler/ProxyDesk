@@ -1,4 +1,4 @@
-# DOM v0.5.13
+# DOM v0.5.14
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -14,8 +14,8 @@ full-page completion and the **Ready** label are not prerequisites. Browser card
 show **Waiting for results**, **Scanning results** and **Opening target**.
 
 One shared recognizer checks title links inside or around headings, plain domain
-labels, accessible/mobile links, Google redirects, encoded destinations and AMP
-links. Results outside `#rso` and links styled with `display:contents` remain
+labels, accessible/mobile links, Google redirects (including `/goto`), encoded
+destinations and AMP links. Results outside `#rso` and links styled with `display:contents` remain
 eligible. Verified target links can also supply a descriptive title without a
 heading/citation structure, and target result modules beside named search roots
 are considered. Friendly publisher names can use their `data-dtld` metadata.
@@ -27,7 +27,12 @@ another site's snippet are excluded.
 A verified publisher label lets DOM activate its own Google title when the
 destination resolves on click. The actual landing domain must match the target
 before Keep Alive starts; DOM never constructs an article URL from a label.
-If Google replaces a detected title, DOM activates the replacement element.
+Google `/goto` links decode a valid HTTP(S) destination from `q` or `url`; opaque
+routes activate their own verified title and let Google resolve the destination.
+DOM opens results through their title links. If a click is ignored or does not
+reach the target, DOM reports the failure and retries the page; it does not load
+the captured article URL directly as a fallback. If Google replaces a detected
+title, DOM activates the replacement element.
 Visible publisher/title text holds the current page while its link hydrates.
 
 A positive match clicks immediately. Before declaring the target absent, DOM
@@ -50,13 +55,15 @@ required. This recovers a lost startup handshake or final match report without
 waiting for Ready or reloading the current results. Hover over a clipped SEO
 results Status cell to read its complete diagnostic message.
 
-Native Electron fixtures cover 60 layouts and 20 opening/pagination cases,
-including targets appended after DOMContentLoaded, click-resolved destinations,
+Native Electron fixtures cover 76 layouts and 22 successful opening/pagination
+cases, including targets appended after DOMContentLoaded, click-resolved destinations,
 replaced links, visible accessibility copies, headingless titles, results/anchors
-arriving after 13 seconds, loads that never complete, offscreen links and cancellation. Run
+arriving after 13 seconds, loads that never complete, offscreen links and cancellation.
+An ignored-click case must report failure without direct-URL navigation. Run
 `node scripts/smoke-google-recognition.cjs` from a graphical desktop (or under
-Xvfb). The same check also opens targets in 50 concurrent browsers with two
-keywords, drops every startup handshake and keeps all Google responses unfinished.
+Xvfb). The same check also opens targets in 50 concurrent browsers mixing direct,
+`/url` and `/goto` title links with two keywords, drops every startup handshake
+and keeps all Google responses unfinished.
 Pass a packaged executable to validate the shipped preload and recognizer.
 
 A publisher and title could be recognized without selecting their linked heading
@@ -66,13 +73,16 @@ Separate decorative modules can join only inside one explicit owning result,
 with one visible linked title and no conflicting publisher. Hidden auxiliary
 headings and dotted breadcrumb filenames cannot displace the real title.
 
-The released 0.5.12 reproduces the reported first-page “publisher is visible”
-monitoring state in this nested-module case. The repaired native test opens its
-actual article before Google parsing/loading completes, with the AI Overview
-still loading. Matching begins as results render and immediately initiates the
-result-title click; Ready, full load and another observation cycle are not required.
-If an associated title remains unusable, its reason, element tag and route are
-shown in the Status diagnostic instead of only the generic publisher message.
+DOM 0.5.13 rejected a visible, associated title with the diagnostic
+`Title link: unsupported-route (a, /goto)`. DOM 0.5.14 accepts that Google result
+route, decodes supported `q`/`url` destinations and clicks opaque title links
+through their own Google activation handler. The prior release reproduces this
+exact rejection in a native fixture. The repaired tests follow the actual `/goto`
+redirect or handler and open the target while Google parsing and the AI Overview
+remain unfinished. Ready, full load and another observation cycle are not required.
+An ignored click remains a reported click failure instead of becoming a direct
+article visit. If an associated title remains unusable, its reason, element tag
+and route appear in the Status diagnostic.
 
 ## Browser startup
 
@@ -118,7 +128,7 @@ new portion of a stable provider list instead of reusing its first entries.
 
 ### Windows download
 
-[Download DOM v0.5.13 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.13/DOM-v0.5.13-Windows-x64-Setup.exe)
+[Download DOM v0.5.14 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.14/DOM-v0.5.14-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -136,7 +146,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.13-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.14-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -159,14 +169,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.13-linux-x86_64.AppImage
-./DOM-v0.5.13-linux-x86_64.AppImage
+chmod +x DOM-v0.5.14-linux-x86_64.AppImage
+./DOM-v0.5.14-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.13-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.14-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -181,7 +191,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.13-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.14-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -197,7 +207,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.13-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.14-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -221,8 +231,10 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch CI publishes the immutable `v0.5.13-linux.1` release only after native
-build, packaged smoke tests and original/optimized fixture comparison succeed.
+Main-branch or `v0.5.14` tag CI publishes the immutable `v0.5.14-linux.1` release
+only after native build, packaged smoke tests and original/optimized fixture
+comparison succeed. Windows and Ubuntu tag workflows publish the same tested
+application source using their workflow tokens.
 The original Windows release is retained. The installer checks host prerequisites;
 the target VPS's display, sandbox configuration and live proxy/search behavior
 still need validation there.

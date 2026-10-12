@@ -1,4 +1,4 @@
-name: DOM v0.5.13 Windows build and release
+name: DOM v0.5.14 Windows build and release
 
 on:
   pull_request:
@@ -40,8 +40,8 @@ jobs:
       - name: Install into a clean directory
         shell: pwsh
         run: |
-          $installer = Resolve-Path 'release-windows/DOM-v0.5.13-Windows-x64-Setup.exe'
-          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.13-installed'
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.14-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.14-installed'
           $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
           $installedExecutable = Join-Path $installDirectory 'DOM.exe'
@@ -56,15 +56,15 @@ jobs:
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $installer = Get-Item 'release-windows/DOM-v0.5.13-Windows-x64-Setup.exe'
+          $installer = Get-Item 'release-windows/DOM-v0.5.14-Windows-x64-Setup.exe'
           $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
-          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.13-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.14-Windows-x64-SHA256SUMS.txt' -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: DOM-v0.5.13-Windows-x64
+          name: DOM-v0.5.14-Windows-x64
           path: |
-            release-windows/DOM-v0.5.13-Windows-x64-Setup.exe
-            release-windows/DOM-v0.5.13-Windows-x64-SHA256SUMS.txt
+            release-windows/DOM-v0.5.14-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.14-Windows-x64-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -78,17 +78,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.13-Windows-x64
+          name: DOM-v0.5.14-Windows-x64
           path: release-assets
       - name: Publish verified Windows release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          cat > /tmp/dom-windows-release-notes.md <<'NOTES'
+          DOM v0.5.14 fixes the exact visible-title rejection “Title link: unsupported-route (a, /goto)”. Google /goto links now decode supported q/url destinations or activate their own verified opaque title link. The title click starts as soon as the match appears while Google and AI Overview remain unfinished; Ready and full loading are not prerequisites. Target landing is verified before Keep Alive.
+
+          Results open through their actual title link. An ignored or failed click is reported and retried; DOM does not visit a captured article URL directly as a fallback. Publisher ownership, neighboring-result, foreign-destination, script-URL, visibility, disabled and sponsored checks remain in place.
+
+          Controlled native validation covers 76 layouts, 22 successful opening/pagination scenarios, an ignored-click rejection and 50 concurrent browsers mixing direct, /url and /goto title links with two keywords and lost startup handshakes. DOM 0.5.13 reproduces the exact /goto rejection. Keywords, proxy selection, rotation and Keep Alive retain their existing behavior.
+
+          Native Windows validation includes a clean NSIS installation, recognition in the installed application and lifecycle checks. A SHA-256 manifest is included.
+          NOTES
           TAG="$(node -p 'require("./package.json").windowsRelease')"
           test "$GITHUB_REF_NAME" = "$TAG"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
           else
-            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.13 for Windows" --notes "DOM v0.5.13 repairs the publisher-visible-but-no-click path: publisher-first recognition now selects its own linked heading even when Google nests the title separately. Candidate selection retains URL, visibility, disabled, sponsored and neighboring-result checks. Decorative modules join only inside one explicit owning result with one visible linked title and no conflicting publisher. Hidden auxiliary headings and dotted breadcrumb filenames do not replace the title or publisher. A verified match immediately initiates its result-title click while Google and AI Overview are still loading; Ready and full load are not prerequisites. Bare unlinked titles remain pending for hydration. Actual target landing is checked before Keep Alive. Compact title-link rejection diagnostics are available in the SEO results Status cell. The released 0.5.12 reproduces the reported first-page monitoring message on the nested-module test. Native validation covers 60 layouts, 20 opening/pagination scenarios and a 50-browser test mixing direct and nested title links with two keywords, dropped startup handshakes and unfinished Google responses. Keyword assignment, proxy providers, rotation and Keep Alive retain their existing behavior. These are controlled native browser reproductions; the exact user session markup is not captured. Native Windows validation also tests the freshly installed NSIS application and verifies resizing, cancellation and restart. A SHA-256 manifest is included."
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.14 for Windows" --notes-file /tmp/dom-windows-release-notes.md
           fi

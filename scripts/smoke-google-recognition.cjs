@@ -25,6 +25,22 @@ const card = (href, heading = title, domain = 'appareldiary.com', extra = '') =>
     `<article>${extra}<div><cite>${domain}</cite></div><div><a href="${href}"><h3>${heading}</h3></a></div><p>Aug 22, 2026 — Set up an LP line balancing model in IE.</p></article>`;
 const html = (body) => `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" href="data:,"></head><body><div id="search"><div id="rso">${body}</div></div></body></html>`;
 const cases = [
+    { name: 'Google goto unwraps the target query destination', body: card('/goto?q=' + encodeURIComponent(article)), match: article },
+    { name: 'Google goto unwraps repeated destination encoding', body: card('/goto?url=' + encodeURIComponent(encodeURIComponent(article))), match: article },
+    { name: 'Google goto unwraps another Google redirect', body: card('/goto?url=' + encodeURIComponent('https://www.google.com/url?q=' + encodeURIComponent(article))), match: article },
+    { name: 'opaque Google goto retains its nested publisher and title', body: `<div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a href="/goto?token=opaque"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true, point: true },
+    { name: 'opaque Google goto accepts its combined visual title', body: `<div class="MjjYud"><a href="/goto?token=opaque"><cite>appareldiary.com</cite><div style="font-size:20px">${title}</div></a></div>`, match: null, seen: true, pending: true },
+    { name: 'Google goto cannot override its decoded foreign destination', body: card('/goto?url=' + encodeURIComponent('https://competitor.test/article')), match: null, seen: false },
+    { name: 'opaque Google goto needs its own target publisher', body: `<article><a href="/goto?token=opaque"><h3>${title}</h3></a></article>`, match: null, seen: false, pending: false },
+    { name: 'Google goto cannot borrow a neighboring publisher', body: `<section><div class="MjjYud"><cite>appareldiary.com</cite></div><div class="MjjYud"><a href="/goto?token=opaque"><h3>${title}</h3></a></div></section>`, match: null, pending: false },
+    { name: 'a lookalike Google goto origin remains rejected', body: card('https://google.com.attacker.test/goto?token=opaque'), match: null, pending: false },
+    { name: 'Google goto prefix is not a supported title route', body: card('/gotox?token=opaque'), match: null, seen: true, pending: false },
+    { name: 'Google goto cannot wrap a JavaScript destination', body: card('/goto?url=' + encodeURIComponent('javascript:void(0)')), match: null, pending: false },
+    { name: 'Google goto cannot wrap a file destination', body: card('/goto?url=' + encodeURIComponent('file:///tmp/article')), match: null, pending: false },
+    { name: 'Google goto cannot wrap a data destination', body: card('/goto?url=' + encodeURIComponent('data:text/html,article')), match: null, pending: false },
+    { name: 'disabled Google goto cannot activate', body: card('/goto?token=opaque').replace('<a href=', '<a aria-disabled="true" href='), match: null, pending: false },
+    { name: 'hidden Google goto cannot activate', body: `<div hidden>${card('/goto?token=opaque')}</div>`, match: null, pending: false },
+    { name: 'sponsored Google goto cannot activate', body: card('/goto?token=opaque', title, 'appareldiary.com', '<span>Sponsored</span>'), match: null, pending: false },
     { name: 'nested Google modules retain their publisher and linked title', body: `<div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true, point: true },
     { name: 'hidden auxiliary heading cannot mask the nested visible target title', body: `<div class="MjjYud"><cite>appareldiary.com</cite><h3 hidden>Hidden auxiliary heading</h3><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true },
     { name: 'separate nested publisher and title belong to their explicit outer result', body: `<div class="MjjYud"><div class="MjjYud"><cite>appareldiary.com</cite></div><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true },
@@ -116,7 +132,7 @@ let application;
             manager.attachWindow(window);
             const timers = new Set();
             const stats = { cases: [], progressive: {}, late: {}, cancellation: {} };
-            let body = '', mode = 'static', phase = 'initialization', googleDomReady = false, googleLoadFinished = false, googleMatch = null, targetDomReady = false, targetRequests = 0, pages = [], lostMatchReport = false;
+            let body = '', mode = 'static', phase = 'initialization', googleDomReady = false, googleLoadFinished = false, googleMatch = null, targetDomReady = false, targetRequests = 0, gotoRequests = 0, pages = [], lostMatchReport = false;
             function later(fn, ms) { const timer = setTimeout(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); }
             try {
                 await manager.createBrowser(901, { startPage: 'about:blank', persistSessions: false });
@@ -148,6 +164,10 @@ let application;
                     const url = new URL(request.url);
                     if (url.hostname.endsWith('appareldiary.com')) targetRequests++;
                     if (mode === 'static') return new Response(body, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+                    if (url.hostname === 'www.google.com' && url.pathname === '/goto') {
+                        gotoRequests++;
+                        return Response.redirect(fixtures.article, 302);
+                    }
                     if (url.hostname === 'pending.test') return new Response(new ReadableStream({ start() {} }), {
                         headers: { 'Content-Type': 'image/png' }
                     });
@@ -201,10 +221,9 @@ let application;
                 // Drain the completed static fixture's navigation before
                 // measuring never-ending responses in the following cases.
                 await wc.loadURL('about:blank');
-                for (const scenario of ['nestedPublisherClick', 'nestedPublisherNoHrefClick', 'lostHandshake', 'lostMatchReport', 'progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
+                for (const scenario of ['gotoOpaqueClick', 'gotoRedirectClick', 'gotoVisualTitleClick', 'nestedPublisherClick', 'nestedPublisherNoHrefClick', 'lostHandshake', 'lostMatchReport', 'progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
                     phase = scenario;
                     mode = scenario; body = fixtures.resultCard; googleDomReady = false; googleLoadFinished = false; googleMatch = null; targetDomReady = false; pages = []; lostMatchReport = false;
-                    if (scenario === 'fallback') body = body.replace('<a href=', '<a onclick="return false" href=');
                     if (scenario === 'linkUpdate') body = body.replace(`href="${fixtures.article}"`, 'id="late-target" href="#"') +
                         `<script>window.__domGoogleWatcher = { state: { match: { url: 'https://competitor.test/' } } }; setTimeout(() => document.getElementById('late-target').href = ${JSON.stringify(fixtures.article)}, 400);</script>`;
                     if (scenario === 'pendingClick') body = body.replace(`href="${fixtures.article}"`,
@@ -215,10 +234,12 @@ let application;
                     if (scenario === 'aiOverviewClick') body = `<section><div class="MjjYud"><h2>AI Overview</h2><p>Access control and visitor management in apparel export factories protect intellectual property.</p><div role="progressbar" aria-busy="true">Loading...</div><span>Sponsored</span></div><div class="MjjYud"><cite>appareldiary.com</cite><a href="${fixtures.article}"><h3>Access Control and Visitor Management for Export Factories</h3></a></div></section>`;
                     if (scenario === 'missingHrefClick') body = `<div class="MjjYud"><cite>appareldiary.com</cite><a jsname="UWckNb" onclick="location.href='${fixtures.article}'"><h3>${fixtures.title}</h3></a></div>`;
                     if (scenario === 'nestedPublisherClick' || scenario === 'nestedPublisherNoHrefClick') body = `<section><div class="MjjYud"><h2>AI Overview</h2><div role="progressbar" aria-busy="true">Loading...</div></div><div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a ${scenario === 'nestedPublisherClick' ? 'href="/url?sa=t"' : 'jsname="UWckNb"'} onclick="event.preventDefault();location.href='${fixtures.article}'"><h3>${fixtures.title}</h3></a></div></div></section>`;
+                    if (scenario === 'gotoOpaqueClick' || scenario === 'gotoRedirectClick') body = `<section><div class="MjjYud"><h2>AI Overview</h2><div role="progressbar" aria-busy="true">Loading...</div></div><div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a href="/goto?${scenario === 'gotoRedirectClick' ? 'url=' + encodeURIComponent(fixtures.article) : 'token=opaque'}"><h3>${fixtures.title}</h3></a></div></div></section>`;
+                    if (scenario === 'gotoVisualTitleClick') body = `<div class="MjjYud"><a href="/goto?token=opaque" onclick="event.preventDefault();location.href='${fixtures.article}'"><cite>appareldiary.com</cite><div style="font-size:20px">${fixtures.title}</div></a></div>`;
                     if (scenario === 'ariaHiddenClick') body = body.replace('<a href=', '<a aria-hidden="true" href=');
                     if (scenario === 'veryLateTitle') body = `<article><div>appareldiary.com</div><h3 id="unlinked-title">${fixtures.title}</h3></article><script>setTimeout(() => { const title=document.getElementById('unlinked-title'); const a=document.createElement('a'); a.href=${JSON.stringify(fixtures.article)}; title.replaceWith(a); a.appendChild(title); }, 13000);</script>`;
                     if (scenario === 'replacedLink') body = body.replace('<a href=', '<a onclick="event.preventDefault(); const next=this.cloneNode(true); next.removeAttribute(\'onclick\'); this.replaceWith(next);" href=');
-                    const token = manager.startMeasurementSession(901), started = Date.now();
+                    const token = manager.startMeasurementSession(901), started = Date.now(), gotoBefore = gotoRequests;
                     let result = await manager.broadcastSearch(901, fixtures.title, 'appareldiary.com', 3, token);
                     if (['veryLate', 'veryLateTitle'].includes(scenario)) {
                         if (result.status !== 'monitoring' || !managed.googleConfig) throw new Error('Slow page lost its live observer');
@@ -227,7 +248,7 @@ let application;
                             result = await manager.broadcastSearch(901, fixtures.title, 'appareldiary.com', 3, token);
                         }
                     }
-                    stats[scenario] = { result, elapsedMs: Date.now() - started, googleDomReady, googleLoadFinished, googleMatch, targetDomReady, targetLoading: wc.isLoading(), pages: [...pages] };
+                    stats[scenario] = { result, elapsedMs: Date.now() - started, googleDomReady, googleLoadFinished, googleMatch, targetDomReady, targetLoading: wc.isLoading(), pages: [...pages], gotoRequests: gotoRequests - gotoBefore };
                     if (result.interactionStatus !== 'opened' || result.matchedUrl !== fixtures.article || result.resultPage !== (scenario === 'pagination' ? 2 : 1)) throw new Error(`${scenario}: target was missed ${JSON.stringify(stats[scenario])}`);
                     // Navigation cancellation can emit did-finish-load while
                     // getURL still reports the outgoing Google URL. Inspect
@@ -235,6 +256,8 @@ let application;
                     if (!googleMatch?.loading || googleMatch.documentParsed !== (scenario === 'hydrated') ||
                         targetDomReady || !wc.isLoading()) throw new Error(`${scenario}: test did not prove recognition/click before page completion`);
                     if (scenario === 'pagination' ? pages.join(',') !== '0,10' : pages.some((page) => page !== '0')) throw new Error(`${scenario}: incorrect pagination`);
+                    if (['gotoOpaqueClick', 'gotoRedirectClick'].includes(scenario) && stats[scenario].gotoRequests !== 1)
+                        throw new Error(`${scenario}: the actual Google goto link was not activated exactly once`);
                     manager.startControlledKeepAlive(901, 'appareldiary.com');
                     if (!managed.keepAliveEnabled) throw new Error(`${scenario}: Keep Alive did not start`);
                     manager.setBrowserKeepAlive(901, false);
@@ -242,6 +265,19 @@ let application;
                     await new Promise((resolve) => later(resolve, 100));
                     await wc.loadURL('about:blank');
                 }
+                phase = mode = 'ignoredClick';
+                body = fixtures.resultCard.replace('<a href=', '<a onclick="event.preventDefault()" href=');
+                pages = [];
+                const ignoredBefore = targetRequests;
+                const ignored = await manager.broadcastSearch(901, fixtures.title, 'appareldiary.com', 3,
+                    manager.startMeasurementSession(901));
+                stats.ignoredClick = { result: ignored, targetRequests: targetRequests - ignoredBefore, pages: [...pages] };
+                if (ignored.interactionStatus !== 'click-failed' || ignored.keepAliveStarted || managed.keepAliveEnabled ||
+                    stats.ignoredClick.targetRequests || !wc.getURL().startsWith('https://www.google.com/search?') || pages.join(',') !== '0')
+                    throw new Error('An ignored result click bypassed Google: ' + JSON.stringify(stats.ignoredClick));
+                manager.cancelMeasurementSession(901);
+                await new Promise(resolve => later(resolve, 100));
+                await wc.loadURL('about:blank');
                 mode = 'progressive'; body = fixtures.resultCard; pages = []; const before = targetRequests;
                 const token = manager.startMeasurementSession(901);
                 const running = manager.broadcastSearch(901, fixtures.title, 'appareldiary.com', 3, token);
@@ -273,7 +309,8 @@ let application;
                                 const google = new URL(request.url).hostname === 'www.google.com';
                                 const direct = `<a href="https://appareldiary.com/fixture/${id}"><h3>${fixtures.title}</h3></a>`;
                                 const nested = `<div class="MjjYud"><a href="/url?sa=t" onclick="event.preventDefault();location.href='https://appareldiary.com/fixture/${id}'"><h3>${fixtures.title}</h3></a></div>`;
-                                const content = google ? `<main id="search"><div class="MjjYud"><cite>appareldiary.com</cite>${id % 2 ? direct : nested}</div></main>` : '<h1>Target article</h1>';
+                                const goto = `<div class="MjjYud"><a href="/goto?token=opaque" onclick="event.preventDefault();location.href='https://appareldiary.com/fixture/${id}'"><h3>${fixtures.title}</h3></a></div>`;
+                                const content = google ? `<main id="search"><div class="MjjYud"><cite>appareldiary.com</cite>${[direct, nested, goto][id % 3]}</div></main>` : '<h1>Target article</h1>';
                                 controller.enqueue(encoder.encode('<!doctype html><html><head><link rel="icon" href="data:,"></head><body>' + content));
                             }
                         }), { headers: { 'Content-Type': 'text/html', 'Cross-Origin-Opener-Policy': 'same-origin', 'Origin-Agent-Cluster': '?1' } }));
@@ -298,6 +335,9 @@ let application;
             }
         }, { cases, title, article, resultCard: card(article) }), 160_000, 'Native Google recognition');
         assert.equal(report.cases.length, cases.length);
+        assert.ok(report.gotoOpaqueClick.elapsedMs < 1_500);
+        assert.ok(report.gotoRedirectClick.elapsedMs < 1_500);
+        assert.ok(report.gotoVisualTitleClick.elapsedMs < 1_500);
         assert.ok(report.nestedPublisherClick.elapsedMs < 1_500);
         assert.ok(report.nestedPublisherNoHrefClick.elapsedMs < 1_500);
         assert.ok(report.lostHandshake.elapsedMs < 3_000);
@@ -307,7 +347,6 @@ let application;
         assert.ok(report.veryLate.elapsedMs > 12_000 && report.veryLate.elapsedMs < 17_000);
         assert.ok(report.veryLateTitle.elapsedMs > 12_000 && report.veryLateTitle.elapsedMs < 17_000);
         assert.ok(report.linkUpdate.elapsedMs < 3_000);
-        assert.ok(report.fallback.elapsedMs < 7_000);
         assert.ok(report.pendingClick.elapsedMs < 3_000);
         assert.ok(report.newLayout.elapsedMs < 3_000);
         assert.ok(report.headinglessClick.elapsedMs < 3_000);

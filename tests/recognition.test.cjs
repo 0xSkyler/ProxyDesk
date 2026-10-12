@@ -62,6 +62,82 @@ test('a cited Google title resolves on click without waiting for Ready or invent
     assert.ok(Date.now() - started < 1_000);
     await manager.destroyAll();
 });
+test('ignored Google result clicks never become direct target navigation', async () => {
+    let time = 0;
+    class Clock extends Date { static now() { return time += 1_000; } }
+    const { manager, managed, wc, publish } = await setup({ Date: Clock });
+    const target = 'https://appareldiary.com/article';
+    const navigations = [], nativeEvents = [], titleClicks = [];
+    wc.isLoading = () => true;
+    wc.sendInputEvent = event => nativeEvents.push(event.type);
+    wc.send = channel => { if (channel === 'dom:google-click') titleClicks.push(channel); };
+    wc.loadURL = async url => {
+        navigations.push(url); wc.url = url;
+        if (new URL(url).hostname === 'www.google.com') setImmediate(() => publish({
+            observedResults: 1, documentParsed: false, targetTextSeen: true,
+            match: { url: target, title: 'Visible target', organicIndex: 0, clickPoint: { x: 20, y: 30 } }
+        }));
+    };
+    const token = manager.startMeasurementSession(1);
+    try {
+        const result = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+        assert.equal(result.interactionStatus, 'click-failed');
+        assert.equal(result.keepAliveStarted, false);
+        assert.equal(managed.keepAliveEnabled, false);
+        assert.equal(result.matchedUrl, target);
+        assert.equal(result.resultPage, 1);
+        assert.equal(navigations.length, 1, 'only the Google results page may be loaded directly');
+        assert.equal(navigations.includes(target), false);
+        assert.ok(nativeEvents.includes('mouseUp'), 'the result must receive a native click attempt');
+        assert.ok(titleClicks.length, 'the title must also receive a DOM click attempt');
+        assert.equal(new URL(wc.getURL()).hostname, 'www.google.com');
+    } finally { await manager.destroyAll(); }
+});
+test('controlled result clicks return false when ignored instead of loading the known target URL', async () => {
+    let time = 0;
+    class Clock extends Date { static now() { return time += 1_000; } }
+    const { manager, managed, wc } = await setup({ Date: Clock });
+    const target = 'https://appareldiary.com/article';
+    const navigations = [], nativeEvents = [];
+    let scriptCalls = 0;
+    wc.url = 'https://www.google.com/search?q=first';
+    wc.sendInputEvent = event => nativeEvents.push(event.type);
+    wc.loadURL = async url => { navigations.push(url); wc.url = url; };
+    wc.executeJavaScript = async () => ++scriptCalls === 1 ?
+        { match: { url: target, title: 'Visible target', organicIndex: 0, clickPoint: { x: 20, y: 30 } } } : true;
+    const token = manager.startMeasurementSession(1);
+    try {
+        const opened = await manager.clickControlledGoogleResult(1, 'first', 'appareldiary.com', target, token);
+        assert.equal(opened, false);
+        assert.equal(navigations.length, 0, 'an ignored title click cannot load a target URL directly');
+        assert.ok(nativeEvents.includes('mouseUp'));
+        assert.equal(scriptCalls, 2, 'a DOM title retry follows the ignored native click');
+        assert.equal(managed.keepAliveEnabled, false);
+        assert.equal(new URL(wc.getURL()).hostname, 'www.google.com');
+    } finally { await manager.destroyAll(); }
+});
+test('Stop during a controlled result scan prevents a late title click', async () => {
+    const { manager, wc } = await setup();
+    const target = 'https://appareldiary.com/article';
+    const nativeEvents = [], navigations = [];
+    let scriptCalls = 0;
+    wc.url = 'https://www.google.com/search?q=first';
+    wc.sendInputEvent = event => nativeEvents.push(event.type);
+    wc.loadURL = async url => { navigations.push(url); wc.url = url; };
+    wc.executeJavaScript = async () => {
+        scriptCalls++;
+        manager.cancelMeasurementSession(1);
+        return { match: { url: target, title: 'Visible target', organicIndex: 0, clickPoint: { x: 20, y: 30 } } };
+    };
+    const token = manager.startMeasurementSession(1);
+    try {
+        assert.equal(await manager.clickControlledGoogleResult(1, 'first', 'appareldiary.com', target, token), false);
+        assert.equal(scriptCalls, 1);
+        assert.equal(nativeEvents.length, 0);
+        assert.equal(navigations.length, 0);
+        assert.equal(new URL(wc.getURL()).hostname, 'www.google.com');
+    } finally { await manager.destroyAll(); }
+});
 test('an unresolved label cannot authorize a contradictory foreign destination', async () => {
     const { manager, wc, publish } = await setup();
     let clicks = 0;
