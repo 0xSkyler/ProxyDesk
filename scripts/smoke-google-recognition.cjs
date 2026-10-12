@@ -292,9 +292,20 @@ let application;
                 try {
                     const { BrowserPreparation } = load(load('node:path').join(global.__domRecognitionRoot, 'src/main/BrowserPreparation.js'));
                     const ids = await new BrowserPreparation(fleet).ensure(50);
-                    const evidence = new Map();
+                    const evidence = new Map(), clickEvidence = new Map();
                     for (const id of ids) {
                         const browser = fleet.get(id), contents = browser.view.webContents;
+                        const trace = { nativeClicks: 0, titleClicks: 0, targetRequests: 0 };
+                        clickEvidence.set(id, trace);
+                        const sendInput = contents.sendInputEvent.bind(contents), send = contents.send.bind(contents);
+                        contents.sendInputEvent = event => {
+                            if (event.type === 'mouseUp') trace.nativeClicks++;
+                            return sendInput(event);
+                        };
+                        contents.send = (channel, ...args) => {
+                            if (channel === 'dom:google-click') trace.titleClicks++;
+                            return send(channel, ...args);
+                        };
                         browser.view.setBounds({ x: 0, y: 0, width: 900, height: 680 });
                         const handler = contents.listeners('ipc-message')[0];
                         contents.removeListener('ipc-message', handler);
@@ -307,6 +318,7 @@ let application;
                         browser.session.protocol.handle('https', request => new Response(new ReadableStream({
                             start(controller) {
                                 const google = new URL(request.url).hostname === 'www.google.com';
+                                if (!google) { trace.targetRequests++; trace.targetRequestedAt = Date.now(); }
                                 const direct = `<a href="https://appareldiary.com/fixture/${id}"><h3>${fixtures.title}</h3></a>`;
                                 const nested = `<div class="MjjYud"><a href="/url?sa=t" onclick="event.preventDefault();location.href='https://appareldiary.com/fixture/${id}'"><h3>${fixtures.title}</h3></a></div>`;
                                 const goto = `<div class="MjjYud"><a href="/goto?token=opaque" onclick="event.preventDefault();location.href='https://appareldiary.com/fixture/${id}'"><h3>${fixtures.title}</h3></a></div>`;
@@ -321,7 +333,14 @@ let application;
                         'appareldiary.com', 5, fleet.startMeasurementSession(id))));
                     stats.concurrent = { count: ids.length, elapsedMs: Date.now() - started,
                         opened: results.filter(result => result.interactionStatus === 'opened').length,
-                        beforeLoad: ids.filter(id => evidence.get(id)?.loading && !evidence.get(id)?.parsed).length };
+                        beforeLoad: ids.filter(id => evidence.get(id)?.loading && !evidence.get(id)?.parsed).length,
+                        failures: results.filter(result => result.interactionStatus !== 'opened' || result.resultPage !== 1).map(result => {
+                            const browser = fleet.get(result.browserId), trace = clickEvidence.get(result.browserId);
+                            return { id: result.browserId, route: ['direct', '/url', '/goto'][result.browserId % 3], result,
+                                currentUrl: browser.view.webContents.getURL(), loading: browser.view.webContents.isLoading(),
+                                recognition: browser.googleState, trace: { ...trace,
+                                    targetRequestMs: trace.targetRequestedAt ? trace.targetRequestedAt - started : undefined } };
+                        }) };
                     if (stats.concurrent.opened !== 50 || stats.concurrent.beforeLoad !== 50 || results.some(result => result.resultPage !== 1))
                         throw new Error('Concurrent recovery failed: ' + JSON.stringify(stats.concurrent));
                 } finally { await fleet.destroyAll(); }
