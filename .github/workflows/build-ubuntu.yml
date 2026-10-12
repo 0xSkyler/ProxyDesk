@@ -1,4 +1,4 @@
-name: DOM v0.5.12 Linux build and regression
+name: DOM v0.5.13 Linux build and regression
 
 on:
   push:
@@ -57,7 +57,7 @@ jobs:
         run: xvfb-run -a node scripts/smoke-google-recognition.cjs release-linux/linux-unpacked/dom
       - name: Verify AppImage startup and clean exit
         run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.12-linux-x86_64.AppImage
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.13-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
       - name: Verify installed production sandbox
         run: |
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DOM-v0.5.12-Ubuntu-x64
+          name: DOM-v0.5.13-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
@@ -111,12 +111,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.12-Ubuntu-x64
+          name: DOM-v0.5.13-Ubuntu-x64
           path: .measurements/download
       - name: Prepare packaged runtime and hash-verified reference (benchmark only)
         run: |
           mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/DOM-v0.5.12-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          tar -xzf .measurements/download/DOM-v0.5.13-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
           npm run recover
           node scripts/compare-reference.cjs
       - name: Measure original v0.5.4
@@ -195,7 +195,7 @@ jobs:
           ref: ${{ steps.verified.outputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.12-Ubuntu-x64
+          name: DOM-v0.5.13-Ubuntu-x64
           path: release-linux
           run-id: ${{ steps.verified.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -233,4 +233,4 @@ jobs:
             test "$(git rev-parse "$TAG^{commit}")" = "$VERIFIED_SOURCE_SHA"
             target_args=(--verify-tag)
           fi
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.12 for Ubuntu 24.04" --notes "DOM v0.5.12 recovers the scanner when its one-time startup handshake or final match report is lost. Configuration requests preserve the live observer and replay a fresh match; main-frame validation uses native process/routing identity while keeping navigation, query and run-token checks. Targets activate before Google finishes loading. Full SEO results Status messages are available on hover. Proxy-metadata updates preserve newly edited tracker inputs instead of replaying the previous run settings just before Start. The title-link classifier, keyword assignment, proxy providers, rotation and Keep Alive behavior are unchanged. Native tests cover 48 layouts, 18 opening/pagination scenarios and a 50-browser two-keyword recovery test with every startup handshake dropped and every Google response unfinished. The missing-observer loop was reproduced in v0.5.11 using transport fault injection. The separate reported publisher-visible unresolved-link case has not been reproduced and is not claimed fixed. Ubuntu validation also checks packaged lifecycle, AppImage startup, the installed production sandbox and a paired runtime comparison. Use deploy/install-ubuntu.sh from the Ubuntu 24.04 x64 desktop as a regular user; release checksums are verified."
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.13 for Ubuntu 24.04" --notes "DOM v0.5.13 repairs the publisher-visible-but-no-click path: publisher-first recognition now selects its own linked heading even when Google nests the title separately. Candidate selection retains URL, visibility, disabled, sponsored and neighboring-result checks. Decorative modules join only inside one explicit owning result with one visible linked title and no conflicting publisher. Hidden auxiliary headings and dotted breadcrumb filenames do not replace the title or publisher. A verified match immediately initiates its result-title click while Google and AI Overview are still loading; Ready and full load are not prerequisites. Bare unlinked titles remain pending for hydration. Actual target landing is checked before Keep Alive. Compact title-link rejection diagnostics are available in the SEO results Status cell. The released 0.5.12 reproduces the reported first-page monitoring message on the nested-module test. Native validation covers 60 layouts, 20 opening/pagination scenarios and a 50-browser test mixing direct and nested title links with two keywords, dropped startup handshakes and unfinished Google responses. Keyword assignment, proxy providers, rotation and Keep Alive retain their existing behavior. These are controlled native browser reproductions; the exact user session markup is not captured. Ubuntu validation also checks packaged lifecycle, AppImage startup, installed production sandbox and a paired runtime comparison. Use deploy/install-ubuntu.sh from the Ubuntu 24.04 x64 desktop as a regular user; release checksums are verified."

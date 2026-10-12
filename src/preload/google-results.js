@@ -59,13 +59,14 @@ function recognizeGoogleResults(targetHost, query = '') {
         }
         return destination(anchor.getAttribute('href') || '');
     }
-    function displayedHost(value) {
+    function displayedDomains(value) {
         // Preserve domain boundaries. Removing all punctuation would also
         // accept evil-example.com or example.com.attacker.test.
         const domains = clean(value).replace(/\s*\.\s*/g, '.')
             .match(/(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+[\p{L}\p{N}-]+\.?/gu) || [];
-        return domains.some((domain) => matchesHost(host(domain)));
+        return domains.map(host).filter(Boolean);
     }
+    function displayedHost(value) { return displayedDomains(value).some(matchesHost); }
     function words(value) {
         return clean(value).toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
     }
@@ -112,21 +113,44 @@ function recognizeGoogleResults(targetHost, query = '') {
         return heading.closest(linkSelector) || heading.querySelector(linkSelector);
     }
     const citationSelector = 'cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b,span,div';
-    function targetCitation(node) {
+    function publisherHosts(node, targetOnly = false) {
         const value = clean(node.getAttribute('data-dtld') || node.textContent);
-        if (!value || value.length > 320 || !displayedHost(value)) return false;
+        if (!value || value.length > 320) return [];
+        const domains = displayedDomains(value);
+        if (!domains.length || (targetOnly && !domains.some(matchesHost))) return [];
         if (!node.matches('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b')) {
             // Ordinary URL labels must not be mentions inside snippets.
             if (node.closest('p') || node.querySelector(headingSelector + ',p') ||
-                !/^(?:https?:\/\/|\/\/)?[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+(?:\/?(?:\s*[›»>|]|\s*$)|\/\S*)/u.test(value)) return false;
+                !/^(?:https?:\/\/|\/\/)?[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+(?:\/?(?:\s*[›»>|]|\s*$)|\/\S*)/u.test(value)) return [];
         }
-        return rendered(node);
+        return rendered(node) ? domains : [];
     }
+    function targetCitation(node) { return publisherHosts(node, true).some(matchesHost); }
     const citations = new WeakMap();
     function hasTargetCitation(card) {
         if (!citations.has(card)) citations.set(card, targetCitation(card) ||
             [...card.querySelectorAll(citationSelector)].some(targetCitation));
         return citations.get(card);
+    }
+    const conflictingPublishers = new WeakMap();
+    function hasConflictingPublisher(card) {
+        if (!conflictingPublishers.has(card)) {
+            const labels = new Set();
+            for (const node of card.querySelectorAll(citationSelector)) {
+                // Breadcrumb fragments inside a citation belong to that
+                // publisher label. An explicit data-dtld remains authoritative.
+                const owner = node.matches('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b') ? node :
+                    node.closest('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b');
+                labels.add(owner && card.contains(owner) ? owner : node);
+            }
+            conflictingPublishers.set(card, [...labels].some(node => {
+                // The first hostname is the URL's publisher. Dotted path and
+                // breadcrumb terms such as article.html are not other sites.
+                const publisher = publisherHosts(node)[0];
+                return publisher && !matchesHost(publisher);
+            }));
+        }
+        return conflictingPublishers.get(card);
     }
     function cardFor(anchor, ownedHeading) {
         let card = anchor;
@@ -185,26 +209,28 @@ function recognizeGoogleResults(targetHost, query = '') {
         if ((url && matchesHost(host(url.href))) ||
             ((anchor.querySelector(headingSelector) || anchor.closest(headingSelector)) && hasTargetCitation(cardFor(anchor)))) anchors.push(anchor);
     }
-    for (const anchor of anchors) {
+    function considerAnchor(anchor, publisherCard, ownedHeading) {
         const url = anchorDestination(anchor);
         const direct = url && matchesHost(host(url.href));
-        if (direct) state.diagnostics.targetLinks++;
+        // The publisher-first pass can reconsider an already enumerated link.
+        // Count its destination only once while sharing all selection guards.
+        if (direct && !publisherCard) state.diagnostics.targetLinks++;
         if (anchor.closest(outsideResults) || anchor.matches('[disabled],[aria-disabled="true"]')) {
-            if (direct) state.diagnostics.outside++; continue;
+            if (direct && !publisherCard) state.diagnostics.outside++; return 'outside-or-disabled';
         }
-        if (!rendered(anchor)) { if (direct) state.diagnostics.hidden++; continue; }
-        const heading = anchor.querySelector(headingSelector) || anchor.closest(headingSelector);
+        if (!rendered(anchor)) { if (direct && !publisherCard) state.diagnostics.hidden++; return 'hidden-link'; }
+        const heading = ownedHeading || anchor.querySelector(headingSelector) || anchor.closest(headingSelector);
         const googleRoute = url && google(url.hostname) && /^\/(?:search|url)\/?$/.test(url.pathname);
-        if (!heading && !direct && !googleRoute) continue;
+        if (!heading && !direct && !googleRoute) return 'unsupported-link';
         const label = text(anchor) || clean(anchor.getAttribute('aria-label'));
         const styledTitle = !heading && visualTitle(anchor);
         const titleText = styledTitle || descriptive(label);
         const googleTitle = titleText && googleRoute;
         // Most Google anchors are menus, tools or media controls. Do not walk
         // their ancestors or read their layout on every document mutation.
-        if (!heading && !direct && !googleTitle) continue;
-        const card = cardFor(anchor);
-        const citedTarget = hasTargetCitation(card);
+        if (!heading && !direct && !googleTitle) return 'no-title';
+        const card = publisherCard || cardFor(anchor);
+        const citedTarget = Boolean(publisherCard) || hasTargetCitation(card);
         // A descriptive title can use its verified target URL directly; an
         // opaque Google title also needs its own publisher citation.
         const citationTitle = !heading && titleText && !anchor.matches('cite,[data-dtld],.VuuXrf,.tjvcx,.qLRx3b') &&
@@ -212,15 +238,15 @@ function recognizeGoogleResults(targetHost, query = '') {
             (citedTarget || (direct && ((url.pathname !== '/' && words(label).length >= 2) || parseFloat(getComputedStyle(anchor).fontSize) >= 18)));
         if (!heading && !citationTitle) {
             if (direct) {
-                state.diagnostics.noTitle++;
+                if (!publisherCard) state.diagnostics.noTitle++;
                 if (citedTarget && !sponsored(card)) {
                     state.targetTextSeen = true;
                     state.candidateText = label;
                 }
             }
-            continue;
+            return 'no-title';
         }
-        if (sponsored(card)) { if (direct) state.diagnostics.sponsored++; continue; }
+        if (sponsored(card)) { if (direct && !publisherCard) state.diagnostics.sponsored++; return 'sponsored'; }
         const title = text(heading) || styledTitle?.value || clean(anchor.getAttribute('aria-label')) || text(anchor);
         const key = url ? url.href.split('#')[0] : anchor.getAttribute('href');
         let organicIndex = records.findIndex((record) => record.key === key);
@@ -236,35 +262,61 @@ function recognizeGoogleResults(targetHost, query = '') {
         // A verified publisher label can activate its own Google result when
         // Google resolves the destination on click. Never invent an article
         // URL, accept a different publisher, or activate a JavaScript URL.
-        if ((!direct && !unresolved) || !url || seen.has(key)) continue;
+        if ((!direct && !unresolved) || !url) return url ? 'unsupported-route' : 'unsupported-scheme';
+        if (seen.has(key)) return 'selected';
         seen.add(key);
         const score = (heading ? 25 : styledTitle ? 20 : 0) + relevance(title) * 200 +
             relevance(text(card)) * 40 + (citedTarget ? 10 : 0);
         if (!winner || score > winner.score) winner = { anchor, url: direct ? url.href : undefined,
             unresolved: !direct, title, organicIndex, score };
+        return 'selected';
+    }
+    for (const anchor of anchors) considerAnchor(anchor);
+    if (!winner) {
+        // A visible publisher/title can precede the anchor itself. Lock its
+        // page now so later href hydration cannot be discarded by pagination.
+        // When the linked title is already present, use the publisher's owning
+        // card: an inner Google module can stop the anchor-first walk before it
+        // reaches the sibling citation. Keep every normal link/click guard.
+        for (const node of roots.flatMap((root) => [...root.querySelectorAll(citationSelector)])) {
+            if (node.closest(outsideResults) || !targetCitation(node)) continue;
+            const publisherModule = node.closest('.MjjYud,.g,[data-snhf],article');
+            for (let parent = node.parentElement, depth = 0;
+                parent && !parent.matches(rootSelector) && depth < 9; parent = parent.parentElement, depth++) {
+                const headings = [...parent.querySelectorAll(headingSelector)]
+                    .filter(heading => rendered(heading) && !heading.closest(outsideResults));
+                if (!headings.length) continue;
+                for (const heading of headings) {
+                    const link = headingLink(heading), url = link && anchorDestination(link);
+                    const competingTitle = headings.some(other => {
+                        const otherLink = headingLink(other);
+                        return other !== heading && otherLink && otherLink !== link && rendered(otherLink) &&
+                            !otherLink.closest(outsideResults);
+                    });
+                    // Separate inner modules may decorate one owning result.
+                    // Join them only at their nearest explicit result module,
+                    // with one visible linked title and no different publisher.
+                    // A generic list/section cannot donate a neighboring cite.
+                    const crossesModule = publisherModule && !publisherModule.contains(heading);
+                    if ((crossesModule && (!link || !parent.matches('.MjjYud,.g,[data-snhf],article') || competingTitle)) ||
+                        hasConflictingPublisher(parent) || sponsored(parent) ||
+                        (url && !google(url.hostname) && !matchesHost(host(url.href)))) continue;
+                    state.targetTextSeen = true;
+                    state.candidateText = text(heading);
+                    const reason = competingTitle ? 'ambiguous-card' : link ? considerAnchor(link, parent, heading) : 'no-link';
+                    if (reason !== 'selected') state.diagnostics.publisherTitle = {
+                        reason, tag: link ? link.tagName.toLowerCase() : 'none',
+                        route: url ? google(url.hostname) ? url.pathname.slice(0, 40) : 'external' : link ? 'non-http' : 'none'
+                    };
+                }
+                // This is the nearest publisher/title scope. Never climb into
+                // the result list to borrow a less closely associated title.
+                break;
+            }
+        }
     }
     state.observedResults = records.length;
     state.signature = records.slice(0, 40).map((record) => record.key + '|' + record.title).join('||');
-    if (!state.targetTextSeen) {
-        // A visible publisher/title can precede the anchor itself. Lock its
-        // page now so later href hydration cannot be discarded by pagination.
-        for (const node of roots.flatMap((root) => [...root.querySelectorAll(citationSelector)])) {
-            if (node.closest(outsideResults) || !targetCitation(node)) continue;
-            for (let parent = node.parentElement, depth = 0;
-                parent && !parent.matches(rootSelector) && depth < 9; parent = parent.parentElement, depth++) {
-                const heading = parent.querySelector(headingSelector);
-                if (!heading) continue;
-                const card = cardFor(node, heading), link = headingLink(heading);
-                const url = link && anchorDestination(link);
-                if (rendered(heading) && !sponsored(card) && (!url || google(url.hostname) || matchesHost(host(url.href)))) {
-                    state.targetTextSeen = true;
-                    state.candidateText = text(heading);
-                }
-                break;
-            }
-            if (state.targetTextSeen) break;
-        }
-    }
     state.pendingResults = roots.some((root) => [...root.querySelectorAll('[aria-busy="true"],[role="progressbar"]')]
         .some(rendered)) || roots.some((root) => root.getAttribute('aria-busy') === 'true');
     for (const link of document.querySelectorAll('a[href]')) {

@@ -90,6 +90,26 @@ test('a failed result scan is reported instead of leaving the browser waiting si
     assert.equal(managed.googleConfig, null);
     await manager.destroyAll();
 });
+test('a visible publisher reports its unselected title link without losing the current page', async () => {
+    let time = 0;
+    class Clock extends Date { static now() { return time += 1_000; } }
+    const { manager, managed, wc, publish } = await setup({ Date: Clock });
+    const pages = [];
+    wc.loadURL = async url => {
+        wc.url = url; pages.push(url);
+        setImmediate(() => publish({ observedResults: 1, documentParsed: false, targetTextSeen: true,
+            candidateText: 'Visible article', diagnostics: { targetLinks: 0,
+                publisherTitle: { reason: 'unsupported-route', tag: 'a', route: '/other' } } }));
+    };
+    const token = manager.startMeasurementSession(1);
+    const result = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+    assert.equal(result.status, 'monitoring');
+    assert.match(result.error, /Title link: unsupported-route \(a, \/other\)/);
+    assert.equal(result.matchedTitle, 'Visible article');
+    assert.equal(pages.length, 1);
+    assert.ok(managed.googleConfig);
+    await manager.destroyAll();
+});
 for (const scenario of ['unrecognized', 'busy']) {
     test(`${scenario} first-page results cannot be treated as an absent target and skipped`, async () => {
         let time = 0;

@@ -613,11 +613,14 @@ class BrowserManager extends node_events_1.EventEmitter {
         const pagesToScan = Math.max(1, Math.min(100, Math.floor(maxPages || 1)));
         const recognitionNote = (state) => {
             const diagnostics = state?.diagnostics;
-            if (!diagnostics?.targetLinks) return '';
+            if (!diagnostics) return '';
             const reasons = { hidden: 'not visible', outside: 'navigation/disabled', noTitle: 'no title', sponsored: 'sponsored' };
             const rejected = Object.keys(reasons).filter(key => diagnostics[key])
                 .map(key => reasons[key] + ' ' + diagnostics[key]).join(', ');
-            return ` Target links: ${diagnostics.targetLinks}.` + (rejected ? ` Rejected: ${rejected}.` : '');
+            const title = diagnostics.publisherTitle;
+            const titleNote = title ? ` Title link: ${title.reason} (${title.tag}, ${title.route}).` : '';
+            return (diagnostics.targetLinks ? ` Target links: ${diagnostics.targetLinks}.` : '') +
+                (rejected ? ` Rejected: ${rejected}.` : '') + titleNote;
         };
         let totalScanned = 0;
         let lastSearchUrl = '';

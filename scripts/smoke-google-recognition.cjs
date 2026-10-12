@@ -25,6 +25,18 @@ const card = (href, heading = title, domain = 'appareldiary.com', extra = '') =>
     `<article>${extra}<div><cite>${domain}</cite></div><div><a href="${href}"><h3>${heading}</h3></a></div><p>Aug 22, 2026 — Set up an LP line balancing model in IE.</p></article>`;
 const html = (body) => `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" href="data:,"></head><body><div id="search"><div id="rso">${body}</div></div></body></html>`;
 const cases = [
+    { name: 'nested Google modules retain their publisher and linked title', body: `<div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true, point: true },
+    { name: 'hidden auxiliary heading cannot mask the nested visible target title', body: `<div class="MjjYud"><cite>appareldiary.com</cite><h3 hidden>Hidden auxiliary heading</h3><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true },
+    { name: 'separate nested publisher and title belong to their explicit outer result', body: `<div class="MjjYud"><div class="MjjYud"><cite>appareldiary.com</cite></div><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true },
+    { name: 'breadcrumb filename is not a conflicting publisher', body: `<div class="MjjYud"><cite>https://appareldiary.com › linear-programming.html</cite><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true },
+    { name: 'nested breadcrumb filename stays part of the owning citation', body: `<div class="MjjYud"><cite>https://appareldiary.com › <span>linear-programming.html</span></cite><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true },
+    { name: 'hidden heading inside a title link cannot replace the visible title', body: `<div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a href="/url?sa=t"><h3 hidden>Hidden heading</h3><h3>${title}</h3></a></div></div>`, match: null, seen: true, pending: true, title },
+    { name: 'conflicting publishers prevent nested citation donation', body: `<div class="MjjYud"><div class="MjjYud"><cite>appareldiary.com</cite></div><div class="MjjYud"><cite>competitor.test</cite><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, pending: false },
+    { name: 'sibling result modules cannot borrow a publisher citation', body: `<section><div class="MjjYud"><cite>appareldiary.com</cite></div><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></section>`, match: null, pending: false },
+    { name: 'nested publisher cannot override a contradictory destination', body: `<div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a href="https://competitor.test/article"><h3>${title}</h3></a></div></div>`, match: null, pending: false },
+    { name: 'nested JavaScript title remains ineligible for activation', body: `<div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a href="javascript:void(0)"><h3>${title}</h3></a></div></div>`, match: null, pending: false },
+    { name: 'nested sponsored target cannot use publisher-first activation', body: `<div class="MjjYud"><span>Sponsored</span><cite>appareldiary.com</cite><div class="MjjYud"><a href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, pending: false },
+    { name: 'nested disabled title cannot use publisher-first activation', body: `<div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a aria-disabled="true" href="/url?sa=t"><h3>${title}</h3></a></div></div>`, match: null, pending: false },
     { name: 'title relevance takes precedence over a neighboring heading tag', body: card('https://appareldiary.com/unrelated', 'About our magazine') + `<div class="MjjYud"><a href="${article}"><span class="VuuXrf">appareldiary.com</span><cite>https://appareldiary.com › Industrial Security</cite><div style="font-size:20px;color:blue">${title}</div></a></div>`, match: article, index: 1 },
     { name: 'combined publisher and visual title in one link', body: `<div class="MjjYud"><a href="${article}"><span class="VuuXrf">appareldiary.com</span><div><cite>https://appareldiary.com › Industrial Security</cite></div><div style="font-size:20px;color:blue">${title}</div></a></div>`, match: article },
     { name: 'combined publisher and visual title in an opaque Google link', body: `<div class="MjjYud"><a href="/url?sa=t"><span class="VuuXrf">appareldiary.com</span><cite>https://appareldiary.com › Industrial Security</cite><div style="font-size:20px;color:blue">${title}</div></a></div>`, match: null, seen: true, pending: true },
@@ -179,6 +191,8 @@ let application;
                     if ((state.match?.url || null) !== fixture.match) throw new Error(`${fixture.name}: wrong match ${JSON.stringify(state)}`);
                     if (fixture.seen != null && state.targetTextSeen !== fixture.seen) throw new Error(`${fixture.name}: wrong domain evidence`);
                     if (fixture.pending && !state.match?.unresolved) throw new Error(`${fixture.name}: cited title was not available for activation`);
+                    if (fixture.pending === false && state.match) throw new Error(`${fixture.name}: unrelated or invalid title became activatable`);
+                    if (fixture.title && state.match?.title !== fixture.title) throw new Error(`${fixture.name}: wrong visible title`);
                     if (fixture.blocked && !state.blocked) throw new Error(`${fixture.name}: challenge not paused`);
                     if (fixture.point && !(state.match.clickPoint?.y > 0 && state.match.clickPoint.y < 680)) throw new Error(`${fixture.name}: invalid native point`);
                     if (fixture.index != null && state.match.organicIndex !== fixture.index) throw new Error(`${fixture.name}: incorrect rank`);
@@ -187,7 +201,7 @@ let application;
                 // Drain the completed static fixture's navigation before
                 // measuring never-ending responses in the following cases.
                 await wc.loadURL('about:blank');
-                for (const scenario of ['lostHandshake', 'lostMatchReport', 'progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
+                for (const scenario of ['nestedPublisherClick', 'nestedPublisherNoHrefClick', 'lostHandshake', 'lostMatchReport', 'progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'fallback', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
                     phase = scenario;
                     mode = scenario; body = fixtures.resultCard; googleDomReady = false; googleLoadFinished = false; googleMatch = null; targetDomReady = false; pages = []; lostMatchReport = false;
                     if (scenario === 'fallback') body = body.replace('<a href=', '<a onclick="return false" href=');
@@ -200,6 +214,7 @@ let application;
                     if (scenario === 'combinedTitleClick') body = `<div class="MjjYud"><a href="/url?sa=t" onclick="event.preventDefault();location.href='${fixtures.article}'"><span class="VuuXrf">appareldiary.com</span><cite>https://appareldiary.com › Industrial Security</cite><div style="font-size:20px;color:blue">${fixtures.title}</div></a></div>`;
                     if (scenario === 'aiOverviewClick') body = `<section><div class="MjjYud"><h2>AI Overview</h2><p>Access control and visitor management in apparel export factories protect intellectual property.</p><div role="progressbar" aria-busy="true">Loading...</div><span>Sponsored</span></div><div class="MjjYud"><cite>appareldiary.com</cite><a href="${fixtures.article}"><h3>Access Control and Visitor Management for Export Factories</h3></a></div></section>`;
                     if (scenario === 'missingHrefClick') body = `<div class="MjjYud"><cite>appareldiary.com</cite><a jsname="UWckNb" onclick="location.href='${fixtures.article}'"><h3>${fixtures.title}</h3></a></div>`;
+                    if (scenario === 'nestedPublisherClick' || scenario === 'nestedPublisherNoHrefClick') body = `<section><div class="MjjYud"><h2>AI Overview</h2><div role="progressbar" aria-busy="true">Loading...</div></div><div class="MjjYud"><cite>appareldiary.com</cite><div class="MjjYud"><a ${scenario === 'nestedPublisherClick' ? 'href="/url?sa=t"' : 'jsname="UWckNb"'} onclick="event.preventDefault();location.href='${fixtures.article}'"><h3>${fixtures.title}</h3></a></div></div></section>`;
                     if (scenario === 'ariaHiddenClick') body = body.replace('<a href=', '<a aria-hidden="true" href=');
                     if (scenario === 'veryLateTitle') body = `<article><div>appareldiary.com</div><h3 id="unlinked-title">${fixtures.title}</h3></article><script>setTimeout(() => { const title=document.getElementById('unlinked-title'); const a=document.createElement('a'); a.href=${JSON.stringify(fixtures.article)}; title.replaceWith(a); a.appendChild(title); }, 13000);</script>`;
                     if (scenario === 'replacedLink') body = body.replace('<a href=', '<a onclick="event.preventDefault(); const next=this.cloneNode(true); next.removeAttribute(\'onclick\'); this.replaceWith(next);" href=');
@@ -249,14 +264,16 @@ let application;
                         contents.removeListener('ipc-message', handler);
                         contents.on('ipc-message', (event, channel, payload) => {
                             if (channel === 'dom:google-preload-ready') return;
-                            if (channel === 'dom:google-state' && payload.state?.match)
+                            if (channel === 'dom:google-state' && payload.state?.match && !evidence.has(id))
                                 evidence.set(id, { loading: contents.isLoading(), parsed: payload.state.documentParsed });
                             handler(event, channel, payload);
                         });
                         browser.session.protocol.handle('https', request => new Response(new ReadableStream({
                             start(controller) {
                                 const google = new URL(request.url).hostname === 'www.google.com';
-                                const content = google ? `<main id="search"><div class="MjjYud"><cite>appareldiary.com</cite><a href="https://appareldiary.com/fixture/${id}"><h3>${fixtures.title}</h3></a></div></main>` : '<h1>Target article</h1>';
+                                const direct = `<a href="https://appareldiary.com/fixture/${id}"><h3>${fixtures.title}</h3></a>`;
+                                const nested = `<div class="MjjYud"><a href="/url?sa=t" onclick="event.preventDefault();location.href='https://appareldiary.com/fixture/${id}'"><h3>${fixtures.title}</h3></a></div>`;
+                                const content = google ? `<main id="search"><div class="MjjYud"><cite>appareldiary.com</cite>${id % 2 ? direct : nested}</div></main>` : '<h1>Target article</h1>';
                                 controller.enqueue(encoder.encode('<!doctype html><html><head><link rel="icon" href="data:,"></head><body>' + content));
                             }
                         }), { headers: { 'Content-Type': 'text/html', 'Cross-Origin-Opener-Policy': 'same-origin', 'Origin-Agent-Cluster': '?1' } }));
@@ -281,6 +298,8 @@ let application;
             }
         }, { cases, title, article, resultCard: card(article) }), 160_000, 'Native Google recognition');
         assert.equal(report.cases.length, cases.length);
+        assert.ok(report.nestedPublisherClick.elapsedMs < 1_500);
+        assert.ok(report.nestedPublisherNoHrefClick.elapsedMs < 1_500);
         assert.ok(report.lostHandshake.elapsedMs < 3_000);
         assert.ok(report.lostMatchReport.elapsedMs < 3_000);
         assert.ok(report.progressive.elapsedMs < 3_000);
