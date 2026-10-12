@@ -1,198 +1,84 @@
-name: DOM v0.5.13 Linux build and regression
+name: Publish verified DOM v0.5.13 Linux release
 
 on:
   push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
-    inputs:
-      publish_release:
-        description: Publish the immutable Linux release after all checks pass
-        type: boolean
-        default: false
-      verified_run_id:
-        description: Optional successful run to publish without rebuilding its tested artifacts
-        default: ''
-      soak_seconds:
-        description: Local fixture active seconds per build (60 for CI, 3600+ for soak)
-        default: '60'
-      browsers:
-        description: Concurrent fixture browser count, 1 to 100
-        default: '10'
+    branches: [codex/publish-dom-0.5.13]
 
 permissions:
   contents: read
 
 concurrency:
-  group: linux-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: publish-dom-v0.5.13-linux.1
+  cancel-in-progress: false
 
 jobs:
-  build-linux:
-    if: inputs.verified_run_id == ''
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-      - name: Install runtime test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libxss1 apparmor
-      - run: npm ci --no-audit --no-fund
-      - run: npm run check
-      - run: npm test
-      - name: Check the bundled Electron Node runtime
-        run: node scripts/check-bundled-runtime.cjs
-      - name: Build from tracked application source
-        run: npm run package:linux
-      - name: Check production archive
-        run: node scripts/check-package.cjs
-      - name: Packaged renderer and lifecycle smoke test
-        run: xvfb-run -a node scripts/benchmark.cjs release-linux/linux-unpacked . .measurements/smoke.json 2 20
-      - name: Recognize and open progressively rendered Google results
-        run: xvfb-run -a node scripts/smoke-google-recognition.cjs release-linux/linux-unpacked/dom
-      - name: Verify AppImage startup and clean exit
-        run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.13-linux-x86_64.AppImage
-          node scripts/smoke-appimage.cjs
-      - name: Verify installed production sandbox
-        run: |
-          sudo install -d -m 755 /opt/dom/ci
-          sudo cp -a release-linux/linux-unpacked/. /opt/dom/ci/
-          sudo chown -R root:root /opt/dom/ci
-          sudo chmod -R go-w /opt/dom/ci
-          sudo chmod 755 /opt/dom/ci/dom
-          sudo chmod 4755 /opt/dom/ci/chrome-sandbox
-          python3 - <<'PY'
-          from pathlib import Path
-          installer = Path('deploy/install-ubuntu.sh').read_text()
-          profile = installer.split("<<'PROFILE'\n", 1)[1].split('\nPROFILE', 1)[0]
-          Path('/tmp/dom-linux').write_text(profile + '\n')
-          PY
-          sudo apparmor_parser -r /tmp/dom-linux
-          DOM_TEST_SANDBOX=1 xvfb-run -a node scripts/smoke-runtime.cjs /opt/dom/ci/dom
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: DOM-v0.5.13-Ubuntu-x64
-          path: |
-            release-linux/*.AppImage
-            release-linux/*.tar.gz
-          if-no-files-found: error
-          retention-days: 30
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: DOM-Linux-packaged-smoke
-          path: |
-            .measurements/smoke.json
-            .measurements/appimage-smoke.log
-          if-no-files-found: error
-          retention-days: 30
-
-  compare-runtime:
-    if: inputs.verified_run_id == '' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-    needs: build-linux
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1
-      - run: npm ci --no-audit --no-fund
-      - uses: actions/download-artifact@v4
-        with:
-          name: DOM-v0.5.13-Ubuntu-x64
-          path: .measurements/download
-      - name: Prepare packaged runtime and hash-verified reference (benchmark only)
-        run: |
-          mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/DOM-v0.5.13-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
-          npm run recover
-          node scripts/compare-reference.cjs
-      - name: Measure original v0.5.4
-        env:
-          SOAK_SECONDS: ${{ inputs.soak_seconds || '60' }}
-          BROWSERS: ${{ inputs.browsers || '10' }}
-        run: xvfb-run -a node scripts/benchmark.cjs .measurements/runtime .recovery/reference .measurements/baseline.json "$SOAK_SECONDS" "$BROWSERS"
-      - name: Measure optimized source
-        if: always()
-        env:
-          SOAK_SECONDS: ${{ inputs.soak_seconds || '60' }}
-          BROWSERS: ${{ inputs.browsers || '10' }}
-        run: xvfb-run -a node scripts/benchmark.cjs .measurements/runtime . .measurements/optimized.json "$SOAK_SECONDS" "$BROWSERS"
-      - name: Compare saved measurements
-        if: always()
-        run: |
-          node scripts/compare-benchmarks.cjs .measurements/baseline.json .measurements/optimized.json .measurements/comparison.md
-          cat .measurements/comparison.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: DOM-Linux-baseline-comparison
-          path: .measurements/*.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 30
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: DOM-Linux-comparison-report
-          path: .measurements/comparison.md
-          retention-days: 30
-
   publish-linux:
-    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
-    needs: [build-linux, compare-runtime]
+    if: github.repository == '0xSkyler/ProxyDesk' && github.ref == 'refs/heads/codex/publish-dom-0.5.13'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
       actions: read
+      pull-requests: write
     steps:
-      - name: Select artifacts from a verified run
+      - name: Validate the completed native Linux run
         id: verified
         env:
           GH_TOKEN: ${{ github.token }}
-          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
         run: |
           set -euo pipefail
-          RUN_ID="${VERIFIED_RUN_ID:-$GITHUB_RUN_ID}"
-          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/dom-verified-run.json
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/dom-verified-jobs.json
+          gh api repos/0xSkyler/ProxyDesk/actions/runs/38286316138 > /tmp/dom-verified-run.json
+          gh api 'repos/0xSkyler/ProxyDesk/actions/runs/38286316138/jobs?per_page=100' > /tmp/dom-verified-jobs.json
+          gh api 'repos/0xSkyler/ProxyDesk/actions/runs/38286316138/artifacts?per_page=100' > /tmp/dom-verified-artifacts.json
           node <<'JS'
           const fs = require('node:fs');
           const assert = require('node:assert/strict');
           const run = JSON.parse(fs.readFileSync('/tmp/dom-verified-run.json'));
           const { jobs } = JSON.parse(fs.readFileSync('/tmp/dom-verified-jobs.json'));
+          const { artifacts } = JSON.parse(fs.readFileSync('/tmp/dom-verified-artifacts.json'));
+          assert.equal(process.env.GITHUB_REPOSITORY, '0xSkyler/ProxyDesk');
+          assert.equal(run.id, 38286316138);
           assert.equal(run.repository.full_name, process.env.GITHUB_REPOSITORY);
           assert.equal(run.path, '.github/workflows/build-ubuntu.yml');
-          assert.match(run.head_sha, /^[0-9a-f]{40}$/);
+          assert.equal(run.head_sha, '79e57fb8eb2dbd85556a012479b45f1b432927e5');
+          assert.equal(run.status, 'completed');
+          assert.equal(run.conclusion, 'success');
           for (const name of ['build-linux', 'compare-runtime']) {
-            const job = jobs.find((job) => job.name === name);
-            assert.ok(job && job.status === 'completed' && job.conclusion === 'success', `${name} must pass in the selected run`);
+            const matching = jobs.filter(job => job.name === name);
+            assert.equal(matching.length, 1, `Exactly one ${name} job is required`);
+            assert.equal(matching[0].status, 'completed');
+            assert.equal(matching[0].conclusion, 'success', `${name} must pass`);
           }
-          if (process.env.VERIFIED_RUN_ID) {
-            assert.equal(run.status, 'completed');
-            assert.equal(run.conclusion, 'success');
-          } else {
-            assert.equal(run.head_sha, process.env.GITHUB_SHA);
+          for (const name of ['DOM-v0.5.13-Ubuntu-x64', 'DOM-Linux-comparison-report', 'DOM-Linux-baseline-comparison']) {
+            const matching = artifacts.filter(artifact => artifact.name === name && !artifact.expired);
+            assert.equal(matching.length, 1, `Exactly one unexpired ${name} artifact is required`);
+            assert.equal(matching[0].workflow_run.id, run.id);
           }
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `run_id=${run.id}\nsource_sha=${run.head_sha}\n`);
-          console.log(`Publishing tested artifacts from run ${run.id}, source ${run.head_sha}`);
+          console.log(`Verified native Linux run ${run.id}, source ${run.head_sha}`);
           JS
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.verified.outputs.source_sha }}
+      - name: Verify delivery commit has identical production inputs
+        env:
+          VERIFIED_SOURCE_SHA: ${{ steps.verified.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$VERIFIED_SOURCE_SHA"
+          git diff --exit-code "$VERIFIED_SOURCE_SHA" "$GITHUB_SHA" -- src package.json package-lock.json third-party deploy README.md
+          git diff --name-only "$VERIFIED_SOURCE_SHA" "$GITHUB_SHA" > /tmp/dom-delivery-diff.txt
+          node <<'JS'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const changed = fs.readFileSync('/tmp/dom-delivery-diff.txt', 'utf8').trim().split('\n');
+          assert.deepEqual(changed, ['.github/workflows/build-ubuntu.yml']);
+          const metadata = require('./package.json');
+          assert.equal(metadata.version, '0.5.13');
+          assert.equal(metadata.linuxRelease, 'v0.5.13-linux.1');
+          console.log(`Delivery ${process.env.GITHUB_SHA} changes only the Linux publication workflow.`);
+          JS
       - uses: actions/download-artifact@v4
         with:
           name: DOM-v0.5.13-Ubuntu-x64
@@ -211,26 +97,72 @@ jobs:
           path: release-linux
           run-id: ${{ steps.verified.outputs.run_id }}
           github-token: ${{ github.token }}
-      - name: Publish verified Linux release
+      - name: Verify release assets and SHA-256 manifest
+        run: |
+          set -euo pipefail
+          node <<'JS'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const entries = fs.readdirSync('release-linux', { withFileTypes: true });
+          assert.ok(entries.every(entry => entry.isFile()), 'Every release asset must be a regular file');
+          assert.deepEqual(entries.map(entry => entry.name).sort(), [
+            'DOM-v0.5.13-linux-x64.tar.gz',
+            'DOM-v0.5.13-linux-x86_64.AppImage',
+            'baseline.json', 'comparison.md', 'optimized.json'
+          ].sort());
+          for (const entry of entries) assert.ok(fs.statSync(`release-linux/${entry.name}`).size > 0);
+          JS
+          cd release-linux
+          sha256sum DOM-v0.5.13-linux-x86_64.AppImage DOM-v0.5.13-linux-x64.tar.gz > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Publish immutable verified Linux release
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFIED_SOURCE_SHA: ${{ steps.verified.outputs.source_sha }}
         run: |
           set -euo pipefail
-          TAG="$(node -p 'require("./package.json").linuxRelease')"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "$TAG is already published; its artifacts will not be overwritten."
+          TAG=v0.5.13-linux.1
+          existing_tag="$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}")"
+          if [[ -n "$existing_tag" ]]; then
+            git fetch --no-tags --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            test "$(git rev-parse "$TAG^{commit}")" = "$GITHUB_SHA"
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$TAG is already published; its tag and assets will not be overwritten."
             exit 0
           fi
-          cd release-linux
-          sha256sum *.AppImage *.tar.gz > SHA256SUMS
-          cd ..
-          target_args=(--target "$VERIFIED_SOURCE_SHA")
-          if [[ "$VERIFIED_SOURCE_SHA" != "$GITHUB_SHA" ]]; then
-            # GITHUB_TOKEN cannot create a tag on another workflow commit.
-            # Historical publication requires a tag created with repository credentials.
-            git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
-            test "$(git rev-parse "$TAG^{commit}")" = "$VERIFIED_SOURCE_SHA"
-            target_args=(--verify-tag)
-          fi
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.13 for Ubuntu 24.04" --notes "DOM v0.5.13 repairs the publisher-visible-but-no-click path: publisher-first recognition now selects its own linked heading even when Google nests the title separately. Candidate selection retains URL, visibility, disabled, sponsored and neighboring-result checks. Decorative modules join only inside one explicit owning result with one visible linked title and no conflicting publisher. Hidden auxiliary headings and dotted breadcrumb filenames do not replace the title or publisher. A verified match immediately initiates its result-title click while Google and AI Overview are still loading; Ready and full load are not prerequisites. Bare unlinked titles remain pending for hydration. Actual target landing is checked before Keep Alive. Compact title-link rejection diagnostics are available in the SEO results Status cell. The released 0.5.12 reproduces the reported first-page monitoring message on the nested-module test. Native validation covers 60 layouts, 20 opening/pagination scenarios and a 50-browser test mixing direct and nested title links with two keywords, dropped startup handshakes and unfinished Google responses. Keyword assignment, proxy providers, rotation and Keep Alive retain their existing behavior. These are controlled native browser reproductions; the exact user session markup is not captured. Ubuntu validation also checks packaged lifecycle, AppImage startup, installed production sandbox and a paired runtime comparison. Use deploy/install-ubuntu.sh from the Ubuntu 24.04 x64 desktop as a regular user; release checksums are verified."
+          # This delivery commit changes only this publication workflow. The
+          # application inputs are identical to the source tested above.
+          cat > /tmp/dom-linux-release-notes.md <<NOTES
+          Repairs the visible-publisher/title path by activating its own linked heading across nested Google result modules. Matches initiate their title click while Google and AI Overview are still loading; Ready and full loading are not prerequisites. Neighboring publishers, foreign destinations, disabled/hidden titles and sponsored results retain their checks. Bare titles wait for their link to appear.
+
+          Controlled native validation: 60 layouts, 20 opening/pagination scenarios and 50 concurrent browsers; Ubuntu lifecycle, AppImage, installed sandbox and paired runtime checks passed.
+
+          Native artifacts were built and tested in run 38286316138 from source $VERIFIED_SOURCE_SHA. Release tag $TAG points to delivery commit $GITHUB_SHA, which changes only the Linux publication workflow; production inputs are identical to the verified source. SHA-256 checksums and comparison reports are included.
+          NOTES
+          gh release create "$TAG" \
+            release-linux/DOM-v0.5.13-linux-x86_64.AppImage \
+            release-linux/DOM-v0.5.13-linux-x64.tar.gz \
+            release-linux/SHA256SUMS release-linux/comparison.md \
+            release-linux/baseline.json release-linux/optimized.json \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+            --title 'DOM v0.5.13 for Ubuntu 24.04' --notes-file /tmp/dom-linux-release-notes.md
+
+      - name: Update the existing pull request with verified release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          const body = [
+            'DOM keeps the recovered desktop workflow with simultaneous comma-separated keywords, selectable All Working/ProxyScrape APIs, editable endpoints and bounded browser startup.',
+            'A visible publisher and article title could remain at Scanning results because the publisher-first fallback only recorded the title without nominating its actual link. An inner Google module could hide the publisher from the anchor-first walk. DOM 0.5.13 now associates the linked heading within its owning result and applies the normal destination, visibility, disabled, ad and neighboring-result checks. Hidden auxiliary headings and dotted breadcrumb filenames cannot displace the title or publisher.',
+            'A verified match immediately initiates its result-title click. Ready, full-page loading and another observation cycle are not prerequisites. Bare unlinked headings remain pending for hydration. Actual target landing is verified before Keep Alive. Unselected title links expose their reason, tag and route in the full Status message.',
+            'Validation: 56 Node tests; 60 native recognition layouts; 20 opening/pagination scenarios; and 50 concurrent browsers mixing direct and nested Google title links with two keywords, lost startup handshakes and unfinished responses. All 50 open their first-page target before load completes. The released 0.5.12 reproduces the reported first-page publisher-visible monitoring message on the nested-module case; the repaired packaged tests open the article in 426–454 ms from navigation start including the 250 ms result-delivery delay. Exact user session markup was not captured.',
+            'Published Windows v0.5.13 passed clean NSIS installation and recognition in the installed app in run 38286458505. A separate PR installer crashed with native 0xC0000005 before installed checks; that artifact is not published. Ubuntu run 38286316138 passed packaged lifecycle, AppImage startup, installed sandbox and paired runtime comparison. Public Windows download passes checksum and tracked-source verification with Windows checkout line endings accounted for.',
+            'Application source: 79e57fb8eb2dbd85556a012479b45f1b432927e5. Windows tag v0.5.13 uses that commit. Ubuntu tag v0.5.13-linux.1 points to the delivery commit, which changes only the Linux publication workflow; the workflow verifies all production inputs are identical to the tested source and reuses its artifacts without rebuilding.',
+            '[Windows installer](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.13/DOM-v0.5.13-Windows-x64-Setup.exe) · [Ubuntu release](https://github.com/0xSkyler/ProxyDesk/releases/tag/v0.5.13-linux.1)'
+          ].join('\n\n');
+          fs.writeFileSync('/tmp/dom-pr-description.json', JSON.stringify({ title: 'DOM 0.5.13: click publisher-associated Google titles immediately', body }));
+          JS
+          gh api repos/0xSkyler/ProxyDesk/pulls/6 --method PATCH --input /tmp/dom-pr-description.json --jq .html_url
