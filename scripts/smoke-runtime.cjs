@@ -141,6 +141,6 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
             server.closeAllConnections();
             await new Promise((resolve) => server.close(resolve));
         }
-        fs.rmSync(profile, { recursive: true, force: true });
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

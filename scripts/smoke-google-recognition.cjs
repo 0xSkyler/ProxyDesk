@@ -302,6 +302,8 @@ let application;
         console.log(JSON.stringify(report, null, 2));
     } finally {
         if (application) await application.close();
-        fs.rmSync(profile, { recursive: true, force: true });
+        // Chromium child processes can finish profile writes just after the
+        // parent exits on Windows. Retry transient ENOTEMPTY/EBUSY errors.
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
