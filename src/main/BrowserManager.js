@@ -1176,6 +1176,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         if (currentHost !== normalizedHost) {
             throw new Error(`Controlled Keep Alive requires exact host ${normalizedHost}; browser is on ${currentHost || 'unknown'}.`);
         }
+        this.cancelKeepAliveAction(managed);
         this.ensureKeepAliveTimer();
         managed.keepAliveGeneration += 1;
         managed.controlledKeepAliveHost = normalizedHost;
@@ -1212,14 +1213,14 @@ class BrowserManager extends node_events_1.EventEmitter {
     cancelKeepAliveAction(managed) {
         const wc = managed.view.webContents;
         if (!wc.isDestroyed()) {
-            void wc.executeJavaScript('window.__domKeepAliveController?.abort()', true).catch(() => undefined);
+            void wc.executeJavaScript('window.__domKeepAliveController?.abort(); delete window.__domKeepAliveReading;', true).catch(() => undefined);
         }
     }
     configureKeepAlive(intervalMs, maxHops, followLinks) {
         this.keepAliveIntervalMs = Math.max(5_000, Math.min(3_600_000, Math.floor(intervalMs || 60_000)));
         this.keepAliveMaxHops = Math.max(1, Math.min(1000, Math.floor(maxHops || 1)));
         // Lite measurement builds keep link-following disabled by default.
-        // Manual Keep Alive still performs the two full scroll cycles.
+        // Manual Keep Alive reads the page even when link-following is disabled.
         this.keepAliveFollowLinks = followLinks;
         this.ensureKeepAliveTimer();
     }
@@ -1394,6 +1395,12 @@ class BrowserManager extends node_events_1.EventEmitter {
             const completedAt = new Date().toISOString();
             managed.keepAliveLastHeartbeatAt = Date.now();
             managed.keepAliveFailureCount = 0;
+            if (result.reading) {
+                // Reading resumes in bounded chunks, keeping Stop, the DOM
+                // action timeout and the watchdog responsive on long articles.
+                managed.keepAliveNextAt = Date.now() + 250;
+                return;
+            }
             if (!controlled && pagesVisited >= this.keepAliveMaxHops) {
                 managed.keepAliveEnabled = false;
                 this.updateState(managed, {
@@ -1465,6 +1472,7 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     const controller = new AbortController();
     window.__domKeepAliveController = controller;
     const signal = controller.signal;
+    signal.addEventListener('abort', () => window.scrollTo?.({ top: window.scrollY || 0, behavior: 'instant' }), { once: true });
     try {
     const visited = new Set(${JSON.stringify(visitedUrls)});
     const allowedHost = ${JSON.stringify(allowedHost?.toLowerCase() ?? '')};
@@ -1483,65 +1491,48 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     );
     const maxScroll = () => Math.max(0, pageHeight() - window.innerHeight);
 
-    const animateScrollTo = (target, duration) =>
-      new Promise((resolve, reject) => {
-        if (signal.aborted) { reject(new Error('Keep Alive cancelled.')); return; }
-        const startY = window.scrollY;
-        const delta = target - startY;
-        if (Math.abs(delta) < 2) {
-          window.scrollTo(0, target);
-          resolve();
-          return;
-        }
-
-        const started = performance.now();
-        let frameId;
-        const abort = () => { cancelAnimationFrame(frameId); signal.removeEventListener('abort', abort); reject(new Error('Keep Alive cancelled.')); };
-        signal.addEventListener('abort', abort, { once: true });
-        function frame(now) {
-          if (signal.aborted) return;
-          const t = Math.min(1, (now - started) / duration);
-          const eased = t < 0.5
-            ? 2 * t * t
-            : 1 - Math.pow(-2 * t + 2, 2) / 2;
-          window.scrollTo(0, startY + delta * eased);
-          if (t < 1) frameId = requestAnimationFrame(frame);
-          else { signal.removeEventListener('abort', abort); resolve(); }
-        }
-        frameId = requestAnimationFrame(frame);
-      });
-
-    const cycles = 2;
-    if (maxScroll() > 0) {
-      // Immediate visible feedback, then the requested full cycles.
-      window.scrollTo(0, Math.min(180, maxScroll()));
-      await wait(140);
-      window.scrollTo(0, 0);
-      await wait(180);
-      await animateScrollTo(0, 700);
-      await wait(250);
-
-      for (let cycle = 0; cycle < cycles; cycle += 1) {
-        const downDuration = 1200 + Math.floor(Math.random() * 700);
-        const upDuration = 1200 + Math.floor(Math.random() * 700);
-        await animateScrollTo(maxScroll(), downDuration);
-        await wait(250 + Math.floor(Math.random() * 250));
-        await animateScrollTo(0, upDuration);
-        await wait(250 + Math.floor(Math.random() * 250));
-      }
-    } else {
-      for (let cycle = 0; cycle < cycles; cycle += 1) {
-        window.scrollBy(0, 1);
-        await wait(350);
-        window.scrollBy(0, -1);
-        await wait(350);
-      }
+    // State belongs to this document, so every real page navigation starts
+    // a new minimum dwell. Chunks retain progress without restarting at top.
+    const pageKey = () => typeof location === 'undefined' ? '' : String(location.href).split('#')[0];
+    const now = performance.now();
+    let reading = window.__domKeepAliveReading;
+    if (!reading || reading.page !== pageKey()) {
+      reading = { page: pageKey(), startedAt: now, lastTickAt: now, startY: Math.max(0, window.scrollY || 0), duration: 30_000 };
+      window.__domKeepAliveReading = reading;
     }
+    if (reading.clickedAt != null && now - reading.clickedAt < 8_500) return { reading: true };
+    reading.clickedAt = undefined;
+    const content = document.querySelector?.('article') || document.querySelector?.('main,[role="main"]') || document.body;
+    const words = String(content?.innerText || content?.textContent || '').match(/[\\p{L}\\p{N}\\p{M}]+/gu)?.length || 0;
+    reading.duration = Math.max(reading.duration, 30_000, words * 60_000 / 450,
+      Math.max(0, maxScroll() - reading.startY) * 1000 / 120);
+    const deadline = performance.now() + 10_000;
+    while (performance.now() < deadline) {
+      if (reading.page !== pageKey()) return { reading: true };
+      const tickAt = performance.now();
+      const elapsed = tickAt - reading.startedAt;
+      const progress = Math.min(1, elapsed / reading.duration);
+      const end = maxScroll();
+      const desired = reading.startY + Math.max(0, end - reading.startY) * progress;
+      // Lazy images/content can increase height. Bound the next movement so
+      // layout growth cannot jump past paragraphs that have just appeared.
+      const step = 120 * Math.min(1, Math.max(0, tickAt - reading.lastTickAt) / 1000);
+      reading.lastTickAt = tickAt;
+      const next = Math.min(desired, (window.scrollY || 0) + step);
+      // Native smooth scrolling avoids a per-frame JavaScript loop in every
+      // browser. Reading only advances; it does not cycle down and back up.
+      if (next > (window.scrollY || 0) + 1) window.scrollTo({ top: next, behavior: 'smooth' });
+      if (progress >= 1 && end - (window.scrollY || 0) <= 2) break;
+      await wait(Math.min(200, Math.max(1, deadline - performance.now())));
+    }
+    if (reading.page !== pageKey() || performance.now() - reading.startedAt < reading.duration || maxScroll() - (window.scrollY || 0) > 2)
+      return { reading: true };
 
     if (!${allowHop ? 'true' : 'false'}) return {};
 
     const blocked = /(login|log-in|logout|sign-in|signin|signup|register|account|cart|basket|checkout|payment|subscribe|privacy|terms|contact|download|delete|remove|admin|wp-admin|wp-login|author|tag|category)/i;
     const currentUrl = new URL(location.href);
+    currentUrl.hash = '';
     const currentHost = currentUrl.hostname.toLowerCase().replace(/^www\\./, '');
     const seen = {};
     const candidates = [];
@@ -1601,10 +1592,14 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     const chosen = top[Math.floor(Math.random() * top.length)];
 
     try {
-      chosen.anchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+      // An earlier inline link can be clicked without reversing the reading scroll.
+      const rect = chosen.anchor.getBoundingClientRect();
+      if (rect.top >= window.innerHeight) chosen.anchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
       await wait(250);
       chosen.anchor.target = '_self';
       chosen.anchor.focus({ preventScroll: true });
+      if (reading.page !== pageKey() || signal.aborted) return { reading: true };
+      reading.clickedAt = performance.now();
       chosen.anchor.click();
       return { clickedUrl: chosen.url };
     } catch (_) {

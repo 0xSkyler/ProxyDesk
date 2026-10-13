@@ -1,4 +1,4 @@
-# DOM v0.5.15
+# DOM v0.5.16
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -94,6 +94,20 @@ Ready nor full-page loading is required. The delayed-first-byte native case
 verifies that a five-second target response opens successfully. An ignored click
 still fails without direct-URL navigation.
 
+## Keep Alive reading pace
+
+Keep Alive scrolls forward at approximately 450 words per minute, with a maximum
+scroll speed of 120 pixels per second. Every new page has a minimum 30-second
+dwell before its next internal article link is clicked; longer articles take
+longer. It does not cycle down and back up or restart from the top between actions.
+Reading runs in bounded ten-second chunks that retain progress and resume promptly,
+so Stop, cancellation and the existing watchdog remain responsive. A new document
+or page URL starts a new dwell. Google result-title clicks remain immediate.
+
+Run `node scripts/smoke-keep-alive-reading.cjs` from a graphical desktop, optionally
+passing a packaged executable. The native check verifies two real page dwells,
+forward scrolling, internal title-link activation and cancellation on the next page.
+
 ## Browser startup
 
 Proxy-metadata updates preserve edited tracker inputs. They do not restore the
@@ -138,7 +152,7 @@ new portion of a stable provider list instead of reusing its first entries.
 
 ### Windows download
 
-[Download DOM v0.5.15 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.15/DOM-v0.5.15-Windows-x64-Setup.exe)
+[Download DOM v0.5.16 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.16/DOM-v0.5.16-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -156,7 +170,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.15-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.16-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -179,14 +193,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.15-linux-x86_64.AppImage
-./DOM-v0.5.15-linux-x86_64.AppImage
+chmod +x DOM-v0.5.16-linux-x86_64.AppImage
+./DOM-v0.5.16-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.15-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.16-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -201,7 +215,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.15-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.16-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -217,7 +231,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.15-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.16-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -241,7 +255,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch or `v0.5.15` tag CI publishes the immutable `v0.5.15-linux.1` release
+Main-branch or `v0.5.16` tag CI publishes the immutable `v0.5.16-linux.1` release
 only after native build, packaged smoke tests and original/optimized fixture
 comparison succeed. Windows and Ubuntu tag workflows publish the same tested
 application source using their workflow tokens.
