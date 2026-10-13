@@ -831,7 +831,33 @@ class BrowserManager extends node_events_1.EventEmitter {
                         if (isGoogleSearchResultsUrl(wc.getURL())) {
                             wc.send('dom:google-click', managed.googleConfig.navigation);
                         }
-                        const navigationDeadline = Date.now() + 3_500;
+                        const verifyTargetLanding = () => {
+                            let current = '';
+                            try { current = wc.getURL(); } catch { /* A transient navigation may dispose the frame. */ }
+                            if (measurementToken != null && !this.isMeasurementSessionCurrent(id, measurementToken)) {
+                                return { url: current, result: { browserId: id, status: 'monitoring', landedUrl: current,
+                                    resultsScanned: totalScanned, monitoring: true, keepAliveStarted: false, ranAt } };
+                            }
+                            if (!(0, seo_1.hostMatchesTarget)(current, targetHost)) return { url: current };
+                            totalScanned += pageMaxObserved;
+                            return { url: current, result: {
+                                browserId: id,
+                                status: 'matched',
+                                landedUrl: current,
+                                matchedUrl: matched.url || current,
+                                matchedTitle: matched.title,
+                                resultsScanned: totalScanned,
+                                position: pageIndex * 10 + matched.organicIndex + 1,
+                                resultPage: pageIndex + 1,
+                                monitoring: true,
+                                interactionStatus: 'opened',
+                                keepAliveStarted: false,
+                                ranAt
+                            } };
+                        };
+                        // Preserve the previous total landing window while
+                        // waiting solely for navigation from the title click.
+                        const navigationDeadline = Date.now() + 8_500;
                         while (Date.now() < navigationDeadline) {
                             if (measurementToken != null &&
                                 !this.isMeasurementSessionCurrent(id, measurementToken)) {
@@ -852,35 +878,19 @@ class BrowserManager extends node_events_1.EventEmitter {
                                 matched = resolved;
                                 wc.send('dom:google-click', managed.googleConfig.navigation);
                             }
-                            try {
-                                const current = wc.getURL();
-                                if ((0, seo_1.hostMatchesTarget)(current, targetHost)) {
-                                    totalScanned += pageMaxObserved;
-                                    return {
-                                        browserId: id,
-                                        status: 'matched',
-                                        landedUrl: current,
-                                        matchedUrl: matched.url || current,
-                                        matchedTitle: matched.title,
-                                        resultsScanned: totalScanned,
-                                        position: pageIndex * 10 + matched.organicIndex + 1,
-                                        resultPage: pageIndex + 1,
-                                        monitoring: true,
-                                        interactionStatus: 'opened',
-                                        keepAliveStarted: false,
-                                        ranAt
-                                    };
-                                }
-                            }
-                            catch {
-                                // Keep waiting while navigation commits.
-                            }
+                            const landing = verifyTargetLanding();
+                            if (landing.result) return landing.result;
                             await delay(75);
                         }
+                        // A commit can arrive during the final poll's delay.
+                        // Check it once more, then reuse that same URL snapshot
+                        // for any failure so a landed target is not rejected.
+                        const finalLanding = verifyTargetLanding();
+                        if (finalLanding.result) return finalLanding.result;
                         if (!(0, seo_1.hostMatchesTarget)(matched.url, targetHost)) {
                             this.stopGoogleRecognition(managed);
                             totalScanned += pageMaxObserved;
-                            return { browserId: id, status: 'matched', landedUrl: wc.getURL(),
+                            return { browserId: id, status: 'matched', landedUrl: finalLanding.url,
                                 matchedTitle: matched.title, resultsScanned: totalScanned,
                                 position: pageIndex * 10 + matched.organicIndex + 1, resultPage: pageIndex + 1,
                                 monitoring: true, interactionStatus: 'click-failed', keepAliveStarted: false,
@@ -892,7 +902,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                         return {
                             browserId: id,
                             status: 'matched',
-                            landedUrl: wc.getURL(),
+                            landedUrl: finalLanding.url,
                             matchedUrl: matched.url,
                             matchedTitle: matched.title,
                             resultsScanned: totalScanned,

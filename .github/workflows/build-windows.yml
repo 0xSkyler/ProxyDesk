@@ -1,4 +1,4 @@
-name: DOM v0.5.14 Windows build and release
+name: DOM v0.5.15 Windows build and release
 
 on:
   pull_request:
@@ -40,8 +40,8 @@ jobs:
       - name: Install into a clean directory
         shell: pwsh
         run: |
-          $installer = Resolve-Path 'release-windows/DOM-v0.5.14-Windows-x64-Setup.exe'
-          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.14-installed'
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.15-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.15-installed'
           $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
           $installedExecutable = Join-Path $installDirectory 'DOM.exe'
@@ -56,15 +56,15 @@ jobs:
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $installer = Get-Item 'release-windows/DOM-v0.5.14-Windows-x64-Setup.exe'
+          $installer = Get-Item 'release-windows/DOM-v0.5.15-Windows-x64-Setup.exe'
           $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
-          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.14-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.15-Windows-x64-SHA256SUMS.txt' -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: DOM-v0.5.14-Windows-x64
+          name: DOM-v0.5.15-Windows-x64
           path: |
-            release-windows/DOM-v0.5.14-Windows-x64-Setup.exe
-            release-windows/DOM-v0.5.14-Windows-x64-SHA256SUMS.txt
+            release-windows/DOM-v0.5.15-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.15-Windows-x64-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.14-Windows-x64
+          name: DOM-v0.5.15-Windows-x64
           path: release-assets
       - name: Publish verified Windows release
         env:
@@ -86,18 +86,19 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/dom-windows-release-notes.md <<'NOTES'
-          DOM v0.5.14 fixes the exact visible-title rejection “Title link: unsupported-route (a, /goto)”. Google /goto links now decode supported q/url destinations or activate their own verified opaque title link. The title click starts as soon as the match appears while Google and AI Overview remain unfinished; Ready and full loading are not prerequisites. Target landing is verified before Keep Alive.
+          DOM v0.5.15 keeps the /goto title support introduced in 0.5.14 and fixes late target navigation being mislabeled as a failed click. DOM initiates the actual result-title click immediately, then allows up to 8.5 seconds for the target URL to commit and checks the landing once more before reporting failure. The initial click timing is unchanged; Ready and full-page loading are not prerequisites.
 
-          Results open through their actual title link. An ignored or failed click is reported and retried; DOM does not visit a captured article URL directly as a fallback. Publisher ownership, neighboring-result, foreign-destination, script-URL, visibility, disabled and sponsored checks remain in place.
+          Google /goto links decode supported q/url destinations or activate their own verified opaque title link. Results open only through their actual title link. An ignored or failed click is reported and retried; DOM does not load the captured article URL directly. Target landing is verified before Keep Alive, with publisher ownership, neighboring-result, foreign-destination, script-URL, visibility, disabled and sponsored checks preserved.
 
-          Controlled native validation covers 76 layouts, 22 successful opening/pagination scenarios, an ignored-click rejection and 50 concurrent browsers mixing direct, /url and /goto title links with two keywords and lost startup handshakes. DOM 0.5.13 reproduces the exact /goto rejection. Keywords, proxy selection, rotation and Keep Alive retain their existing behavior.
+          Controlled native validation covers 76 layouts, 23 successful opening/pagination scenarios including a five-second first-byte target response, an ignored-click rejection and 50 concurrent browsers mixing direct, /url and /goto title links with two keywords and lost startup handshakes. DOM 0.5.13 reproduces the original /goto rejection; 0.5.14's installed Windows check exposed the late-commit failure. Keywords, proxy selection, rotation and Keep Alive retain their existing behavior.
 
           Native Windows validation includes a clean NSIS installation, recognition in the installed application and lifecycle checks. A SHA-256 manifest is included.
           NOTES
           TAG="$(node -p 'require("./package.json").windowsRelease')"
           test "$GITHUB_REF_NAME" = "$TAG"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release-assets/* --clobber
+            echo "$TAG is already published; its artifacts will not be overwritten."
+            exit 0
           else
-            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.14 for Windows" --notes-file /tmp/dom-windows-release-notes.md
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.15 for Windows" --notes-file /tmp/dom-windows-release-notes.md
           fi

@@ -1,9 +1,9 @@
-name: DOM v0.5.14 Linux build and regression
+name: DOM v0.5.15 Linux build and regression
 
 on:
   push:
     branches: [main]
-    tags: ['v0.5.14']
+    tags: ['v0.5.15']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -58,7 +58,7 @@ jobs:
         run: xvfb-run -a node scripts/smoke-google-recognition.cjs release-linux/linux-unpacked/dom
       - name: Verify AppImage startup and clean exit
         run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.14-linux-x86_64.AppImage
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.15-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
       - name: Verify installed production sandbox
         run: |
@@ -79,7 +79,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DOM-v0.5.14-Ubuntu-x64
+          name: DOM-v0.5.15-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
@@ -112,12 +112,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.14-Ubuntu-x64
+          name: DOM-v0.5.15-Ubuntu-x64
           path: .measurements/download
       - name: Prepare packaged runtime and hash-verified reference (benchmark only)
         run: |
           mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/DOM-v0.5.14-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          tar -xzf .measurements/download/DOM-v0.5.15-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
           npm run recover
           node scripts/compare-reference.cjs
       - name: Measure original v0.5.4
@@ -152,7 +152,7 @@ jobs:
           retention-days: 30
 
   publish-linux:
-    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/v0.5.14')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
+    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/v0.5.15')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
     needs: [build-linux, compare-runtime]
     runs-on: ubuntu-24.04
     permissions:
@@ -196,7 +196,7 @@ jobs:
           ref: ${{ steps.verified.outputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.14-Ubuntu-x64
+          name: DOM-v0.5.15-Ubuntu-x64
           path: release-linux
           run-id: ${{ steps.verified.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -219,11 +219,11 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/dom-linux-release-notes.md <<'NOTES'
-          DOM v0.5.14 fixes the exact visible-title rejection “Title link: unsupported-route (a, /goto)”. Google /goto links now decode supported q/url destinations or activate their own verified opaque title link. The title click starts as soon as the match appears while Google and AI Overview remain unfinished; Ready and full loading are not prerequisites. Target landing is verified before Keep Alive.
+          DOM v0.5.15 keeps the /goto title support introduced in 0.5.14 and fixes late target navigation being mislabeled as a failed click. DOM initiates the actual result-title click immediately, then allows up to 8.5 seconds for the target URL to commit and checks the landing once more before reporting failure. The initial click timing is unchanged; Ready and full-page loading are not prerequisites.
 
-          Results open through their actual title link. An ignored or failed click is reported and retried; DOM does not visit a captured article URL directly as a fallback. Publisher ownership, neighboring-result, foreign-destination, script-URL, visibility, disabled and sponsored checks remain in place.
+          Google /goto links decode supported q/url destinations or activate their own verified opaque title link. Results open only through their actual title link. An ignored or failed click is reported and retried; DOM does not load the captured article URL directly. Target landing is verified before Keep Alive, with publisher ownership, neighboring-result, foreign-destination, script-URL, visibility, disabled and sponsored checks preserved.
 
-          Controlled native validation covers 76 layouts, 22 successful opening/pagination scenarios, an ignored-click rejection and 50 concurrent browsers mixing direct, /url and /goto title links with two keywords and lost startup handshakes. DOM 0.5.13 reproduces the exact /goto rejection. Keywords, proxy selection, rotation and Keep Alive retain their existing behavior.
+          Controlled native validation covers 76 layouts, 23 successful opening/pagination scenarios including a five-second first-byte target response, an ignored-click rejection and 50 concurrent browsers mixing direct, /url and /goto title links with two keywords and lost startup handshakes. DOM 0.5.13 reproduces the original /goto rejection; 0.5.14's installed Windows check exposed the late-commit failure. Keywords, proxy selection, rotation and Keep Alive retain their existing behavior.
 
           Ubuntu validation includes packaged lifecycle, AppImage startup, installed production sandbox and paired runtime comparison. The Linux tag workflow publishes artifacts from the same tested application source. SHA-256 checksums and comparison reports are included.
           NOTES
@@ -243,4 +243,4 @@ jobs:
             test "$(git rev-parse "$TAG^{commit}")" = "$VERIFIED_SOURCE_SHA"
             target_args=(--verify-tag)
           fi
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.14 for Ubuntu 24.04" --notes-file /tmp/dom-linux-release-notes.md
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.15 for Ubuntu 24.04" --notes-file /tmp/dom-linux-release-notes.md

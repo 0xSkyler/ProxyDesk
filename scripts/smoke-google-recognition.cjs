@@ -160,9 +160,11 @@ let application;
                         googleMatch = { loading: wc.isLoading(), documentParsed: payload.state.documentParsed };
                 });
                 const encoder = new TextEncoder();
-                managed.session.protocol.handle('https', (request) => {
+                managed.session.protocol.handle('https', async (request) => {
                     const url = new URL(request.url);
                     if (url.hostname.endsWith('appareldiary.com')) targetRequests++;
+                    if (url.hostname === 'appareldiary.com' && mode === 'slowTargetCommit')
+                        await new Promise(resolve => later(resolve, 5_000));
                     if (mode === 'static') return new Response(body, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
                     if (url.hostname === 'www.google.com' && url.pathname === '/goto') {
                         gotoRequests++;
@@ -221,7 +223,7 @@ let application;
                 // Drain the completed static fixture's navigation before
                 // measuring never-ending responses in the following cases.
                 await wc.loadURL('about:blank');
-                for (const scenario of ['gotoOpaqueClick', 'gotoRedirectClick', 'gotoVisualTitleClick', 'nestedPublisherClick', 'nestedPublisherNoHrefClick', 'lostHandshake', 'lostMatchReport', 'progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
+                for (const scenario of ['gotoOpaqueClick', 'gotoRedirectClick', 'gotoVisualTitleClick', 'slowTargetCommit', 'nestedPublisherClick', 'nestedPublisherNoHrefClick', 'lostHandshake', 'lostMatchReport', 'progressive', 'late', 'veryLate', 'veryLateTitle', 'linkUpdate', 'pendingClick', 'newLayout', 'headinglessClick', 'combinedTitleClick', 'aiOverviewClick', 'missingHrefClick', 'ariaHiddenClick', 'replacedLink', 'hydrated', 'pagination']) {
                     phase = scenario;
                     mode = scenario; body = fixtures.resultCard; googleDomReady = false; googleLoadFinished = false; googleMatch = null; targetDomReady = false; pages = []; lostMatchReport = false;
                     if (scenario === 'linkUpdate') body = body.replace(`href="${fixtures.article}"`, 'id="late-target" href="#"') +
@@ -357,6 +359,7 @@ let application;
         assert.ok(report.gotoOpaqueClick.elapsedMs < 1_500);
         assert.ok(report.gotoRedirectClick.elapsedMs < 1_500);
         assert.ok(report.gotoVisualTitleClick.elapsedMs < 1_500);
+        assert.ok(report.slowTargetCommit.elapsedMs > 5_000 && report.slowTargetCommit.elapsedMs < 8_500);
         assert.ok(report.nestedPublisherClick.elapsedMs < 1_500);
         assert.ok(report.nestedPublisherNoHrefClick.elapsedMs < 1_500);
         assert.ok(report.lostHandshake.elapsedMs < 3_000);

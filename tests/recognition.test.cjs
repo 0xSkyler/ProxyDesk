@@ -93,6 +93,67 @@ test('ignored Google result clicks never become direct target navigation', async
         assert.equal(new URL(wc.getURL()).hostname, 'www.google.com');
     } finally { await manager.destroyAll(); }
 });
+for (const scenario of [
+    { name: 'an actual title click can land after 3.5 seconds while the target remains loading', commitAfter: 5_000 },
+    { name: 'a target commit at the click deadline is verified before reporting failure', commitAfter: 8_500, exactBoundary: true },
+    { name: 'Stop at the click deadline prevents a late target landing from being reported as opened', commitAfter: 8_500, exactBoundary: true, cancel: true }
+]) {
+    test(scenario.name, async () => {
+        let time = 0, clickedAt = null, committedAt = null, browserManager, contents;
+        class Clock extends Date { static now() { return time; } }
+        const target = 'https://appareldiary.com/article';
+        const advanceTimer = (callback, ms, ...args) => {
+            if (![25, 75, 100].includes(ms)) return setTimeout(callback, ms, ...args);
+            return setImmediate(() => {
+                time += ms;
+                if (clickedAt !== null && committedAt === null && time >= clickedAt + scenario.commitAfter) {
+                    if (scenario.exactBoundary) time = clickedAt + scenario.commitAfter;
+                    if (scenario.cancel) browserManager.cancelMeasurementSession(1);
+                    contents.url = target;
+                    committedAt = time;
+                }
+                callback(...args);
+            });
+        };
+        const { manager, managed, wc, publish } = await setup({ Date: Clock, setTimeout: advanceTimer });
+        browserManager = manager; contents = wc;
+        const navigations = [], titleClicks = [];
+        wc.isLoading = () => true;
+        wc.loadURL = async url => {
+            navigations.push(url); wc.url = url;
+            setImmediate(() => publish({ observedResults: 1, documentParsed: false, targetTextSeen: true,
+                match: { url: target, title: 'Visible target', organicIndex: 0 } }));
+        };
+        wc.send = channel => {
+            if (channel === 'dom:google-click') {
+                titleClicks.push(channel);
+                if (clickedAt === null) clickedAt = time;
+            }
+        };
+        const token = manager.startMeasurementSession(1);
+        try {
+            const result = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, token);
+            if (scenario.cancel) {
+                assert.equal(result.status, 'monitoring');
+                assert.notEqual(result.interactionStatus, 'opened');
+                assert.equal(manager.isMeasurementSessionCurrent(1, token), false);
+            } else {
+                assert.equal(result.interactionStatus, 'opened');
+                assert.equal(result.landedUrl, target);
+                assert.equal(result.matchedUrl, target);
+                assert.equal(result.resultPage, 1);
+                assert.equal(wc.isLoading(), true, 'target loading cannot delay an already verified landing');
+            }
+            assert.equal(result.keepAliveStarted, false);
+            assert.equal(managed.keepAliveEnabled, false);
+            assert.equal(navigations.length, 1, 'only the Google results page may be loaded directly');
+            assert.equal(navigations.includes(target), false);
+            assert.equal(titleClicks.length, 1, 'the landing must originate from the real title-click request');
+            assert.ok(committedAt - clickedAt >= scenario.commitAfter);
+            if (scenario.exactBoundary) assert.equal(committedAt - clickedAt, scenario.commitAfter);
+        } finally { await manager.destroyAll(); }
+    });
+}
 test('controlled result clicks return false when ignored instead of loading the known target URL', async () => {
     let time = 0;
     class Clock extends Date { static now() { return time += 1_000; } }

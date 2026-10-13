@@ -1,4 +1,4 @@
-# DOM v0.5.14
+# DOM v0.5.15
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -55,10 +55,11 @@ required. This recovers a lost startup handshake or final match report without
 waiting for Ready or reloading the current results. Hover over a clipped SEO
 results Status cell to read its complete diagnostic message.
 
-Native Electron fixtures cover 76 layouts and 22 successful opening/pagination
+Native Electron fixtures cover 76 layouts and 23 successful opening/pagination
 cases, including targets appended after DOMContentLoaded, click-resolved destinations,
 replaced links, visible accessibility copies, headingless titles, results/anchors
-arriving after 13 seconds, loads that never complete, offscreen links and cancellation.
+arriving after 13 seconds, loads that never complete, target responses whose first
+byte arrives after five seconds, offscreen links and cancellation.
 An ignored-click case must report failure without direct-URL navigation. Run
 `node scripts/smoke-google-recognition.cjs` from a graphical desktop (or under
 Xvfb). The same check also opens targets in 50 concurrent browsers mixing direct,
@@ -74,15 +75,24 @@ with one visible linked title and no conflicting publisher. Hidden auxiliary
 headings and dotted breadcrumb filenames cannot displace the real title.
 
 DOM 0.5.13 rejected a visible, associated title with the diagnostic
-`Title link: unsupported-route (a, /goto)`. DOM 0.5.14 accepts that Google result
-route, decodes supported `q`/`url` destinations and clicks opaque title links
-through their own Google activation handler. The prior release reproduces this
+`Title link: unsupported-route (a, /goto)`. DOM 0.5.14 added support for that Google
+result route, decoding supported `q`/`url` destinations and clicking opaque title
+links through their own Google activation handler. DOM 0.5.13 reproduces this
 exact rejection in a native fixture. The repaired tests follow the actual `/goto`
 redirect or handler and open the target while Google parsing and the AI Overview
 remain unfinished. Ready, full load and another observation cycle are not required.
 An ignored click remains a reported click failure instead of becoming a direct
 article visit. If an associated title remains unusable, its reason, element tag
 and route appear in the Status diagnostic.
+
+DOM 0.5.14 could label an actual title click as failed when the target committed
+between its last URL poll and deadline, or needed more than 3.5 seconds to commit.
+DOM 0.5.15 allows up to 8.5 seconds to verify the target landing and checks the
+URL again before reporting failure. This extends confirmation after the click;
+the first click still starts immediately when the result appears, and neither
+Ready nor full-page loading is required. The delayed-first-byte native case
+verifies that a five-second target response opens successfully. An ignored click
+still fails without direct-URL navigation.
 
 ## Browser startup
 
@@ -128,7 +138,7 @@ new portion of a stable provider list instead of reusing its first entries.
 
 ### Windows download
 
-[Download DOM v0.5.14 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.14/DOM-v0.5.14-Windows-x64-Setup.exe)
+[Download DOM v0.5.15 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.15/DOM-v0.5.15-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -146,7 +156,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.14-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.15-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -169,14 +179,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.14-linux-x86_64.AppImage
-./DOM-v0.5.14-linux-x86_64.AppImage
+chmod +x DOM-v0.5.15-linux-x86_64.AppImage
+./DOM-v0.5.15-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.14-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.15-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -191,7 +201,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.14-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.15-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -207,7 +217,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.14-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.15-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -231,7 +241,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch or `v0.5.14` tag CI publishes the immutable `v0.5.14-linux.1` release
+Main-branch or `v0.5.15` tag CI publishes the immutable `v0.5.15-linux.1` release
 only after native build, packaged smoke tests and original/optimized fixture
 comparison succeed. Windows and Ubuntu tag workflows publish the same tested
 application source using their workflow tokens.
