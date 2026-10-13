@@ -1,4 +1,4 @@
-# DOM v0.5.17
+# DOM v0.5.18
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -104,8 +104,9 @@ remain available for manual interaction. Both handlers run in each browser’s
 preload while the page is still loading. The same search resumes after dismissal,
 and its matching result is opened through the actual result-title click.
 
-Before each proxy cycle, DOM stops the outgoing browser work and clears every
-selected browser’s HTTP cache, renderer memory cache and Cache Storage. Cleanup runs two browsers at a
+Before each proxy cycle, DOM stops outgoing browser work, releases its page through
+a local blank document, and clears every selected browser’s HTTP cache, renderer
+memory cache and Cache Storage. Healthy proxy routing remains assigned throughout. Cleanup runs two browsers at a
 time, finishes before proxy fetching/searching starts, and retains cookies so
 Google’s accepted consent choice survives. A failed cleanup reports an error
 instead of starting searches with a cache that could be cleared late. Stop cancels
@@ -152,11 +153,24 @@ still run their page monitoring, target clicks and Keep Alive concurrently.
 ## Simultaneous keywords
 
 Enter comma-separated keywords and select at least one browser for each keyword.
-Every cycle assigns the keywords across the existing browser fleet in order and
-runs them at the same time. For example, three browsers with `first, second`
-run `first`, `second`, and `first`. Rotation keeps the same assignment and only
-refreshes the proxies and browser sessions. Google challenge handling, Keep Alive,
-proxy fetching and browser controls retain the recovered workflow.
+The first cycle distributes keywords across the browser fleet in order and runs
+them simultaneously. Each subsequent cycle moves every browser to the next keyword
+and wraps at the end of the list. For example, three browsers with `first, second`
+run `first, second, first`, then `second, first, second`.
+
+A proxy that reached Google and had no connection failure during the outgoing cycle
+stays assigned to its browser. Only failed or unproven connections receive fresh
+proxies. Retained endpoints cannot be assigned to another browser, including under
+another proxy protocol, and the just-failed endpoints are excluded from replacements.
+Google consent/challenge responses prove reachability; a challenge is not classified
+as a dead transport connection. No separate Google validation request is added.
+
+All selected browsers still clear their caches before each cycle and start a fresh
+search for their next keyword. Healthy browsers keep their native proxy routing and
+do not wait for the replacement API. An all-healthy cycle skips the API request.
+The status bar shows **Kept** and **New** counts. `node scripts/smoke-proxy-rotation.cjs`
+checks three native cycles, a failed slot, unchanged healthy routing/connections,
+keyword rotation, all-healthy API skipping and per-cycle cache cleanup.
 
 ## Proxy sources
 
@@ -168,14 +182,14 @@ the provider is disabled while a run is active; stop the tracker first.
 Public lists can contain dead proxies. DOM no longer marks an assigned proxy as
 Ready merely because `about:blank` loaded. The card stays at **Proxy assigned**
 until a real page reaches DOM readiness, and failed or timed-out Google navigation
-is reported as **Proxy failed**. Each manual or scheduled rotation advances to a
-new portion of a stable provider list instead of reusing its first entries.
+is reported as **Proxy failed**. When replacements are needed, a manual or scheduled cycle advances through the
+provider list while reserving retained endpoints and excluding just-failed ones.
 
 ## Build and run
 
 ### Windows download
 
-[Download DOM v0.5.17 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.17/DOM-v0.5.17-Windows-x64-Setup.exe)
+[Download DOM v0.5.18 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.18/DOM-v0.5.18-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -193,7 +207,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.17-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.18-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -216,14 +230,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.17-linux-x86_64.AppImage
-./DOM-v0.5.17-linux-x86_64.AppImage
+chmod +x DOM-v0.5.18-linux-x86_64.AppImage
+./DOM-v0.5.18-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.17-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.18-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -238,7 +252,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.17-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.18-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -254,7 +268,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.17-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.18-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -278,7 +292,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch or `v0.5.17` tag CI publishes the immutable `v0.5.17-linux.1` release
+Main-branch or `v0.5.18` tag CI publishes the immutable `v0.5.18-linux.1` release
 only after native build, packaged smoke tests and original/optimized fixture
 comparison succeed. Windows and Ubuntu tag workflows publish the same tested
 application source using their workflow tokens.

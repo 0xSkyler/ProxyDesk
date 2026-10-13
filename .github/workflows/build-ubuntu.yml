@@ -1,9 +1,9 @@
-name: DOM v0.5.17 Linux build and regression
+name: DOM v0.5.18 Linux build and regression
 
 on:
   push:
     branches: [main]
-    tags: ['v0.5.17']
+    tags: ['v0.5.18']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -56,13 +56,15 @@ jobs:
         run: xvfb-run -a node scripts/benchmark.cjs release-linux/linux-unpacked . .measurements/smoke.json 2 20
       - name: Recognize and open progressively rendered Google results
         run: xvfb-run -a node scripts/smoke-google-recognition.cjs release-linux/linux-unpacked/dom
+      - name: Verify selective proxy and keyword rotation
+        run: xvfb-run -a node scripts/smoke-proxy-rotation.cjs release-linux/linux-unpacked/dom
       - name: Verify native Google prompts and cycle cache cleanup
         run: xvfb-run -a node scripts/smoke-google-prompts.cjs release-linux/linux-unpacked/dom
       - name: Verify forward reading and thirty-second page dwell
         run: xvfb-run -a node scripts/smoke-keep-alive-reading.cjs release-linux/linux-unpacked/dom
       - name: Verify AppImage startup and clean exit
         run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.17-linux-x86_64.AppImage
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.18-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
       - name: Verify installed production sandbox
         run: |
@@ -83,7 +85,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DOM-v0.5.17-Ubuntu-x64
+          name: DOM-v0.5.18-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
@@ -116,12 +118,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.17-Ubuntu-x64
+          name: DOM-v0.5.18-Ubuntu-x64
           path: .measurements/download
       - name: Prepare packaged runtime and hash-verified reference (benchmark only)
         run: |
           mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/DOM-v0.5.17-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          tar -xzf .measurements/download/DOM-v0.5.18-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
           npm run recover
           node scripts/compare-reference.cjs
       - name: Measure original v0.5.4
@@ -156,7 +158,7 @@ jobs:
           retention-days: 30
 
   publish-linux:
-    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/v0.5.17')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
+    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/v0.5.18')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
     needs: [build-linux, compare-runtime]
     runs-on: ubuntu-24.04
     permissions:
@@ -200,7 +202,7 @@ jobs:
           ref: ${{ steps.verified.outputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.17-Ubuntu-x64
+          name: DOM-v0.5.18-Ubuntu-x64
           path: release-linux
           run-id: ${{ steps.verified.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -223,11 +225,11 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/dom-linux-release-notes.md <<'NOTES'
-          DOM 0.5.17 automatically clicks Google’s Accept all button on cookie dialogs and separate consent pages. It clicks Continue on request-verification screens once enabled, then resumes the same search without waiting for Ready or full loading. Each browser handles its own prompts; disabled buttons, CAPTCHA controls and unrelated website buttons are not activated.
+          DOM 0.5.18 keeps each proxy that reached Google and remained free of connection failures during the previous cycle. Only failed or unproven browser connections receive fresh proxies. Reserved healthy endpoints cannot be assigned to another browser, including under a different protocol; recently failed endpoints are excluded from replacement candidates.
 
-          Every proxy cycle stops outgoing work and clears each selected browser’s HTTP cache, renderer memory cache and Cache Storage before proxy fetching and searching start. Cleanup runs two browsers at a time, preserves consent cookies, and remains cancellable. Failures stop the cycle and report an error.
+          Every browser advances to the next keyword each cycle, wrapping through the simultaneous keyword list. Healthy browsers start their next search without waiting for the provider, and all-healthy cycles skip fetching entirely. The status bar shows Kept and New counts.
 
-          Immediate actual Google result-title clicks and forward Keep Alive reading with at least 30 seconds per page remain in place. Validation includes native prompt/redirect/independent-browser/cache tests, 76 Google layouts, 23 opening scenarios, the 50-browser unfinished-load test and real Keep Alive reading/Stop checks. SHA-256 checksums are included.
+          Cache cleanup still runs before every cycle and preserves consent cookies. A local blank document releases the outgoing page without waiting for Google/target Ready; cleanup IPC is replayed across frame changes, delayed outgoing aborts are handled, and an old search cannot remove the new cycle’s observer. Google prompt acceptance, actual result-title clicks and at least 30 seconds of forward Keep Alive reading remain in place. Validation includes installed native three-cycle rotation tests, Google prompt/cache checks, 76 layouts, 23 opening scenarios, 50 unfinished-load browsers and real reading/Stop checks. SHA-256 checksums are included.
           NOTES
           TAG="$(node -p 'require("./package.json").linuxRelease')"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -245,4 +247,4 @@ jobs:
             test "$(git rev-parse "$TAG^{commit}")" = "$VERIFIED_SOURCE_SHA"
             target_args=(--verify-tag)
           fi
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.17 for Ubuntu 24.04" --notes-file /tmp/dom-linux-release-notes.md
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.18 for Ubuntu 24.04" --notes-file /tmp/dom-linux-release-notes.md

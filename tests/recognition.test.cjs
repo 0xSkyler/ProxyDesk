@@ -19,6 +19,23 @@ async function setup(globals = {}) {
     }
     return { manager, managed, wc, publish };
 }
+test('an outgoing search cannot remove the next cycle’s observer when its cancellation finishes late', async () => {
+    const { manager, managed, wc } = await setup();
+    const oldToken = manager.startMeasurementSession(1);
+    const outgoing = manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, oldToken);
+    await new Promise(setImmediate);
+    manager.cancelMeasurementSession(1);
+    const newToken = manager.startMeasurementSession(1);
+    const nextConfig = { target: 'appareldiary.com', query: 'second', start: '0', token: newToken, navigation: 2 };
+    managed.googleConfig = nextConfig;
+    managed.googleState = { observedResults: 1 };
+    wc.url = 'https://www.google.com/search?q=second';
+    try {
+        await outgoing;
+        assert.equal(managed.googleConfig, nextConfig);
+        assert.equal(managed.googleState.observedResults, 1);
+    } finally { await manager.destroyAll(); }
+});
 test('a visible first-page target opens while loadURL and executeJavaScript never settle', async () => {
     const { manager, managed, wc, publish } = await setup();
     let scriptCalls = 0;

@@ -72,7 +72,7 @@ test('100 sleeping monitors keep cancellation listeners bounded and release ever
     const ids = Array.from({ length: 100 }, (_, i) => i + 1);
     let searches = 0;
     const browser = {
-        cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {}, clearCache: async () => {},
+        getProxyRotationState: () => ({proxy:null}), prepareCycleDocument: async () => {}, cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {}, clearCache: async () => {},
         startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true,
         broadcastSearch: async () => { searches++; return { status: 'no-match' }; }
     };
@@ -175,20 +175,20 @@ test('Stop during browser preparation cannot resurrect running state or a rotati
 test('stale preparation failure cannot overwrite a newer Start', async () => {
     const preparation = deferred();
     const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
-    const automation = new SeoAutomationManager({ cancelCurrentFetch() {}, fetchAssignDirect: async () => {} }, { cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {}, clearCache: async () => {} }, () => preparation.promise);
+    const automation = new SeoAutomationManager({ cancelCurrentFetch() {}, fetchAssignDirect: async () => {} }, { getProxyRotationState: () => ({proxy:null}), prepareCycleDocument: async () => {}, cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {}, clearCache: async () => {} }, () => preparation.promise);
     const work = automation.start({ query: 'a', targetWebsite: 'example.test', browserCount: 1 }); automation.stop(); preparation.resolve([]); await work;
     assert.equal(automation.getState().lastError, undefined);
 });
 test('all keywords run concurrently across the existing browser fleet', async () => {
     const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
     const assignments = [], searches = [], enabled = [];
-    const browser = { cancelMeasurementSession() {}, setBrowserKeepAlive(id, value) { enabled.push([id, value]); }, assignProxy: async (id, proxy) => assignments.push([id, proxy]), clearCache: async () => {}, startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true, broadcastSearch: async (id, query) => { searches.push([id, query]); return { status: 'matched', interactionStatus: 'opened', matchedUrl: 'https://example.test/a' }; }, startControlledKeepAlive() {} };
+    const browser = { getProxyRotationState: () => ({proxy:null}), prepareCycleDocument: async () => {}, cancelMeasurementSession() {}, setBrowserKeepAlive(id, value) { enabled.push([id, value]); }, assignProxy: async (id, proxy) => assignments.push([id, proxy]), clearCache: async () => {}, startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true, broadcastSearch: async (id, query) => { searches.push([id, query]); return { status: 'matched', interactionStatus: 'opened', matchedUrl: 'https://example.test/a' }; }, startControlledKeepAlive() {} };
     const proxies = { cancelCurrentFetch() {}, fetchAssignDirect: async (ids, callback) => ids.forEach((id) => callback({ browserId: id, proxy: { host: '127.0.0.1', port: id } })) };
     const automation = new SeoAutomationManager(proxies, browser, async () => [1, 2, 3]);
     await automation.start({ query: ' first, second ', targetWebsite: 'example.test', intervalSec: 30, browserCount: 3, maxPages: 20 }); await tick();
     assert.deepEqual(searches, [[1, 'first'], [2, 'second'], [3, 'first']]);
     await automation.runNow(); await tick();
-    assert.deepEqual(searches.slice(3), [[1, 'first'], [2, 'second'], [3, 'first']]);
+    assert.deepEqual(searches.slice(3), [[1, 'second'], [2, 'first'], [3, 'second']]);
     automation.stop(); assert.equal(automation.getState().running, false); assert.equal(automation.timer, null);
     assert.equal(assignments.filter(([, proxy]) => proxy).length, 6);
     assert.equal(enabled.filter(([, value]) => value).length, 0);
@@ -218,7 +218,7 @@ test('proxy source configuration is user-selected and reaches the cycle unchange
     const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
     let sourceOptions;
     const proxies = { cancelCurrentFetch() {}, fetchAssignDirect: async (_ids, _assign, _progress, options) => { sourceOptions = options; } };
-    const browser = { cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {}, clearCache: async () => {} };
+    const browser = { getProxyRotationState: () => ({proxy:null}), prepareCycleDocument: async () => {}, cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {}, clearCache: async () => {} };
     const automation = new SeoAutomationManager(proxies, browser, async () => [1]);
     const configured = automation.configureProxy({ source: 'all-working', endpoint: 'https://feed.example.test/custom.txt' });
     assert.equal(configured.proxySourceLabel, 'All Working API');

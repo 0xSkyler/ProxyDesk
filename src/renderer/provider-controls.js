@@ -45,6 +45,17 @@ function updateSourceCopy(label) {
     const strong = status?.querySelector('strong');
     if (strong && strong.textContent !== label)
         strong.textContent = label;
+    const cycleStatus = document.querySelector('.tracker-status');
+    if (cycleStatus && latestState) {
+        let retained = cycleStatus.querySelector('[data-dom-proxy-rotation]');
+        if (!retained) {
+            retained = document.createElement('span');
+            retained.dataset.domProxyRotation = 'true';
+            cycleStatus.append(retained);
+        }
+        const message = `Kept ${latestState.retainedBrowsers || 0} · New ${latestState.replacedBrowsers || 0}`;
+        if (retained.textContent !== message) retained.textContent = message;
+    }
     if (preparationStatus && latestState) {
         const preparing = Boolean(latestState.preparingBrowsers);
         preparationStatus.hidden = !preparing;

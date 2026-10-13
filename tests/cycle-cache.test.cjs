@@ -13,7 +13,7 @@ test('each cycle clears every cache before fetching/assigning proxies, with two 
     const ids = [1, 2, 3, 4, 5], events = [];
     let active = 0, peak = 0, cycle = 0;
     const browser = {
-        cancelMeasurementSession: id => events.push([cycle, 'stop', id]), setBrowserKeepAlive() {},
+        getProxyRotationState: () => ({proxy:null}), prepareCycleDocument: async () => {}, cancelMeasurementSession: id => events.push([cycle, 'stop', id]), setBrowserKeepAlive() {},
         assignProxy: async id => events.push([cycle, 'reset', id]),
         clearCache: async id => {
             active++; peak = Math.max(peak, active); await tick();
@@ -37,7 +37,7 @@ test('each cycle clears every cache before fetching/assigning proxies, with two 
 test('Stop releases a hung native cache clear and never starts a new search', async () => {
     const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
     const gate = deferred(); let fetched = false;
-    const browser = { cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {}, clearCache: () => gate.promise };
+    const browser = { getProxyRotationState: () => ({proxy:null}), prepareCycleDocument: async () => {}, cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {}, clearCache: () => gate.promise };
     const proxy = { cancelCurrentFetch() {}, fetchAssignDirect: async () => { fetched = true; } };
     const automation = new SeoAutomationManager(proxy, browser, async () => []);
     automation.state = { ...automation.state, running: true, browserIds: [1], query: 'first' };
@@ -52,7 +52,7 @@ test('Stop releases a hung native cache clear and never starts a new search', as
 test('cache cleanup failure is reported and prevents proxy fetching', async () => {
     const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
     let fetched = false;
-    const browser = { cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {},
+    const browser = { getProxyRotationState: () => ({proxy:null}), prepareCycleDocument: async () => {}, cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {},
         clearCache: async () => { throw new Error('Cache could not be cleared'); } };
     const automation = new SeoAutomationManager({ fetchAssignDirect: async () => { fetched = true; } }, browser, async () => []);
     automation.state = { ...automation.state, running: true, browserIds: [1], query: 'first' };
@@ -97,4 +97,40 @@ test('memory cache acknowledgements require the current main frame and request I
     wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'dom:renderer-cache-cleared', { requestId });
     await work; assert.equal(done, true); assert.equal(managed.rendererCacheRequest, null);
     await manager.destroyAll();
+});
+
+test('a lost cache-cleanup message is replayed instead of stalling rotation during a frame swap', async () => {
+    const electron = fakeElectron();
+    const { BrowserManager } = loadTree(root, electron)('main/BrowserManager.js');
+    const manager = new BrowserManager(); manager.attachWindow(electron.window);
+    await manager.createBrowser(1, { startPage: 'about:blank' });
+    const managed = manager.get(1), wc = managed.view.webContents, send = wc.send.bind(wc);
+    let requests = 0;
+    wc.send = (channel, ...args) => {
+        if (channel === 'dom:clear-renderer-cache' && ++requests === 1) return;
+        send(channel, ...args);
+    };
+    try {
+        await withTimeout(manager.clearRendererCache(managed), 1_000, () => { throw new Error('A dropped message stalled cache cleanup'); });
+        assert.equal(requests, 2);
+        assert.equal(managed.rendererCacheRequest, null);
+    } finally { await manager.destroyAll(); }
+});
+
+test('the outgoing target’s delayed abort does not reject the new local blank document', async () => {
+    const electron = fakeElectron();
+    const { BrowserManager } = loadTree(root, electron)('main/BrowserManager.js');
+    const manager = new BrowserManager(); manager.attachWindow(electron.window);
+    await manager.createBrowser(1, { startPage: 'about:blank' });
+    const wc = manager.get(1).view.webContents, listeners = wc.listenerCount('did-navigate');
+    wc.url = 'https://appareldiary.com/outgoing';
+    wc.loadURL = () => {
+        setImmediate(() => { wc.url = 'about:blank'; wc.emit('did-navigate', {}, 'about:blank'); });
+        return Promise.reject(new Error(" (-3) loading 'https://appareldiary.com/outgoing'"));
+    };
+    try {
+        await manager.prepareCycleDocument(1);
+        assert.equal(wc.getURL(), 'about:blank');
+        assert.equal(wc.listenerCount('did-navigate'), listeners);
+    } finally { await manager.destroyAll(); }
 });

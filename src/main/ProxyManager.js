@@ -76,6 +76,12 @@ class ProxyManager extends node_events_1.EventEmitter {
                 throw new Error('Proxy API request cancelled.');
             }
             const parsed = (0, ProxyParser_1.parseBulkText)(raw, source.label);
+            const retained = sourceOptions.retainedAssignments || [];
+            const endpointOf = proxy => `${proxy.host.toLowerCase()}:${proxy.port}`;
+            const excluded = new Set([
+                ...retained.map(assignment => endpointOf(assignment.proxy)),
+                ...(sourceOptions.failedProxies || []).map(endpointOf)
+            ]);
             // Deduplicate by network endpoint so the same host:port is not assigned
             // to multiple browsers in the same cycle, regardless of protocol label.
             const endpointSeen = new Set();
@@ -94,16 +100,18 @@ class ProxyManager extends node_events_1.EventEmitter {
             // the top of a stable public feed therefore cannot pin a browser to
             // the same blank page on every cycle.
             const cursor = (this.sourceCursors.get(source.id) ?? 0) % proxies.length;
-            const orderedProxies = [...proxies.slice(cursor), ...proxies.slice(0, cursor)];
+            const orderedProxies = [...proxies.slice(cursor), ...proxies.slice(0, cursor)].filter(proxy => !excluded.has(endpointOf(proxy)));
             this.sourceCursors.set(source.id, (cursor + browserIds.length) % proxies.length);
             this.allProxies.clear();
             this.assignments.clear();
+            for (const assignment of retained) this.assignments.set(assignment.browserId, assignment.proxy);
             for (const proxy of orderedProxies)
                 this.allProxies.set(proxy.id, proxy);
+            for (const assignment of retained) this.allProxies.set(assignment.proxy.id, assignment.proxy);
             const assignedCount = Math.min(browserIds.length, orderedProxies.length);
-            const total = orderedProxies.length;
+            const total = proxies.length;
             this.emit('reloadProgress', { checked: total, total });
-            onProgress?.(total, total, total, assignedCount, parsed.proxies.length);
+            onProgress?.(total, total, orderedProxies.length, assignedCount, parsed.proxies.length);
             for (let index = 0; index < assignedCount; index += 1) {
                 const browserId = browserIds[index];
                 const proxy = orderedProxies[index];

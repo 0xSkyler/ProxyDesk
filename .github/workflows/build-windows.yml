@@ -1,4 +1,4 @@
-name: DOM v0.5.17 Windows build and release
+name: DOM v0.5.18 Windows build and release
 
 on:
   pull_request:
@@ -40,8 +40,8 @@ jobs:
       - name: Install into a clean directory
         shell: pwsh
         run: |
-          $installer = Resolve-Path 'release-windows/DOM-v0.5.17-Windows-x64-Setup.exe'
-          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.17-installed'
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.18-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.18-installed'
           $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
           $installedExecutable = Join-Path $installDirectory 'DOM.exe'
@@ -53,6 +53,9 @@ jobs:
       - name: Verify recognition in the installed application
         shell: pwsh
         run: node scripts/smoke-google-recognition.cjs "$env:DOM_INSTALLED_EXE"
+      - name: Verify installed selective proxy and keyword rotation
+        shell: pwsh
+        run: node scripts/smoke-proxy-rotation.cjs "$env:DOM_INSTALLED_EXE"
       - name: Verify installed Google prompts and cycle cache cleanup
         shell: pwsh
         run: node scripts/smoke-google-prompts.cjs "$env:DOM_INSTALLED_EXE"
@@ -62,15 +65,15 @@ jobs:
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $installer = Get-Item 'release-windows/DOM-v0.5.17-Windows-x64-Setup.exe'
+          $installer = Get-Item 'release-windows/DOM-v0.5.18-Windows-x64-Setup.exe'
           $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
-          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.17-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.18-Windows-x64-SHA256SUMS.txt' -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: DOM-v0.5.17-Windows-x64
+          name: DOM-v0.5.18-Windows-x64
           path: |
-            release-windows/DOM-v0.5.17-Windows-x64-Setup.exe
-            release-windows/DOM-v0.5.17-Windows-x64-SHA256SUMS.txt
+            release-windows/DOM-v0.5.18-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.18-Windows-x64-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -84,7 +87,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.17-Windows-x64
+          name: DOM-v0.5.18-Windows-x64
           path: release-assets
       - name: Publish verified Windows release
         env:
@@ -92,11 +95,11 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/dom-windows-release-notes.md <<'NOTES'
-          DOM 0.5.17 automatically clicks Google’s Accept all button on cookie dialogs and separate consent pages. It clicks Continue on request-verification screens once enabled, then resumes the same search without waiting for Ready or full loading. Each browser handles its own prompts; disabled buttons, CAPTCHA controls and unrelated website buttons are not activated.
+          DOM 0.5.18 keeps each proxy that reached Google and remained free of connection failures during the previous cycle. Only failed or unproven browser connections receive fresh proxies. Reserved healthy endpoints cannot be assigned to another browser, including under a different protocol; recently failed endpoints are excluded from replacement candidates.
 
-          Every proxy cycle stops outgoing work and clears each selected browser’s HTTP cache, renderer memory cache and Cache Storage before proxy fetching and searching start. Cleanup runs two browsers at a time, preserves consent cookies, and remains cancellable. Failures stop the cycle and report an error.
+          Every browser advances to the next keyword each cycle, wrapping through the simultaneous keyword list. Healthy browsers start their next search without waiting for the provider, and all-healthy cycles skip fetching entirely. The status bar shows Kept and New counts.
 
-          Immediate actual Google result-title clicks and forward Keep Alive reading with at least 30 seconds per page remain in place. Validation includes native prompt/redirect/independent-browser/cache tests, 76 Google layouts, 23 opening scenarios, the 50-browser unfinished-load test and real Keep Alive reading/Stop checks. SHA-256 checksums are included.
+          Cache cleanup still runs before every cycle and preserves consent cookies. A local blank document releases the outgoing page without waiting for Google/target Ready; cleanup IPC is replayed across frame changes, delayed outgoing aborts are handled, and an old search cannot remove the new cycle’s observer. Google prompt acceptance, actual result-title clicks and at least 30 seconds of forward Keep Alive reading remain in place. Validation includes installed native three-cycle rotation tests, Google prompt/cache checks, 76 layouts, 23 opening scenarios, 50 unfinished-load browsers and real reading/Stop checks. SHA-256 checksums are included.
           NOTES
           TAG="$(node -p 'require("./package.json").windowsRelease')"
           test "$GITHUB_REF_NAME" = "$TAG"
@@ -104,5 +107,5 @@ jobs:
             echo "$TAG is already published; its artifacts will not be overwritten."
             exit 0
           else
-            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.17 for Windows" --notes-file /tmp/dom-windows-release-notes.md
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.18 for Windows" --notes-file /tmp/dom-windows-release-notes.md
           fi

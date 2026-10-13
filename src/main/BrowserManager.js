@@ -200,6 +200,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             partition,
             session: ses,
             state,
+            proxyHealth: { googleReached: false, failed: false },
             restartAttempts: 0,
             googleBlockRetries: 0,
             keepAliveEnabled: false,
@@ -270,7 +271,10 @@ class BrowserManager extends node_events_1.EventEmitter {
                 return;
             }
             if (channel === 'dom:google-preload-ready') {
-                try { event.reply('dom:google-config', managed.googleConfig || null); }
+                try {
+                    event.reply('dom:google-config', managed.googleConfig || null);
+                    if (managed.rendererCacheRequest) event.reply('dom:clear-renderer-cache', managed.rendererCacheRequest.requestId);
+                }
                 catch { /* Navigation or cancellation disposed the sender frame. */ }
                 return;
             }
@@ -292,6 +296,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             if (config.token != null && !this.isMeasurementSessionCurrent(id, config.token)) return;
             managed.googleState = payload.state;
             if (payload.state?.observedResults) {
+                if (managed.state.proxy) managed.proxyHealth.googleReached = true;
                 const activity = payload.state.match ? 'opening-target' : 'scanning-results';
                 if (managed.state.loading || managed.state.connectionStatus !== 'connected' || managed.state.googleSearchActivity !== activity)
                     this.updateState(managed, { loading: false, connectionStatus: 'connected', googleSearchActivity: activity });
@@ -321,7 +326,15 @@ class BrowserManager extends node_events_1.EventEmitter {
                     : readyStatus()
             });
         });
-        wc.on('did-navigate', (_e, url) => {
+        wc.on('did-navigate', (_e, url, httpResponseCode) => {
+            // A committed Google response proves reachability without waiting
+            // for Ready or adding a separate proxy-validation request.
+            try {
+                const parsed = new URL(url);
+                if (managed.state.proxy && httpResponseCode >= 100 && httpResponseCode < 600 &&
+                    /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(parsed.hostname))
+                    managed.proxyHealth.googleReached = true;
+            } catch { /* Non-web navigation is not proxy health evidence. */ }
             this.updateState(managed, { url });
             this.maybeHandleGoogleBlock(managed, url, options);
             this.requestGoogleState(managed, true);
@@ -335,6 +348,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         wc.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {
             if (!isMainFrame || errorCode === -3)
                 return; // -3 = ERR_ABORTED (e.g. user navigated away mid-load)
+            if (managed.state.proxy && /^https?:\/\//i.test(_url)) managed.proxyHealth.failed = true;
             this.updateState(managed, {
                 loading: false,
                 connectionStatus: managed.state.proxy ? 'proxy-failed' : 'no-proxy',
@@ -440,6 +454,36 @@ class BrowserManager extends node_events_1.EventEmitter {
             throw new Error(`Unknown browser id: ${id}`);
         return managed;
     }
+    getProxyRotationState(id) {
+        const managed = this.get(id);
+        return { proxy: managed.state.proxy, ...managed.proxyHealth };
+    }
+    beginProxyCycle(id) {
+        this.get(id).proxyHealth = { googleReached: false, failed: false };
+    }
+    async prepareCycleDocument(id, signal) {
+        // Release the outgoing page and any navigation that was still
+        // committing when the cycle ended. The local blank document installs
+        // its preload immediately; this never waits for Google/target Ready.
+        const wc = this.get(id).view.webContents;
+        let navigated;
+        const closed = new Promise((resolve, reject) => {
+            navigated = (_event, url) => { if (url === 'about:blank') resolve(); };
+            wc.on('did-navigate', navigated);
+            void wc.loadURL('about:blank').then(() => {
+                if (wc.getURL() === 'about:blank') resolve();
+            }).catch(error => {
+                // Electron may reject this load promise with the outgoing
+                // target's delayed ERR_ABORTED event. Its blank navigation
+                // still commits; use that navigation's own event instead.
+                if (!/ERR_ABORTED|-3/i.test(error.message || String(error))) reject(error);
+            });
+        });
+        try {
+            await waitForPreparation(closed, 15_000, signal,
+                `Browser ${id} could not close its outgoing page before the next cycle.`);
+        } finally { wc.removeListener('did-navigate', navigated); }
+    }
     async navigate(id, url) {
         const managed = this.get(id);
         managed.googleBlockRetries = 0;
@@ -490,13 +534,22 @@ class BrowserManager extends node_events_1.EventEmitter {
     async clearRendererCache(managed) {
         const requestId = (managed.rendererCacheSequence || 0) + 1;
         managed.rendererCacheSequence = requestId;
+        const send = () => {
+            try {
+                if (!managed.view.webContents.isDestroyed()) managed.view.webContents.send('dom:clear-renderer-cache', requestId);
+            } catch { /* A frame swap can briefly invalidate the IPC target. */ }
+        };
         const complete = new Promise((resolve, reject) => {
             managed.rendererCacheRequest = { requestId, finish: error => error ? reject(new Error(error)) : resolve() };
-            managed.view.webContents.send('dom:clear-renderer-cache', requestId);
+            send();
         });
+        // Rotation can overlap a target navigation's frame swap. Replay the
+        // request into the current frame until it acknowledges cleanup.
+        const retry = setInterval(send, 250);
         try {
             await withTimeout(complete, 5_000, () => { throw new Error(`Browser ${managed.id} memory cache cleanup did not respond.`); });
         } finally {
+            clearInterval(retry);
             if (managed.rendererCacheRequest?.requestId === requestId) managed.rendererCacheRequest = null;
         }
     }
@@ -541,6 +594,7 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     async assignProxyOwned(id, proxy, managed) {
         if (this.disposed || managed.disposed || this.browsers.get(id) !== managed) return;
+        managed.proxyHealth = { googleReached: false, failed: false };
         this.cancelKeepAliveAction(managed);
         // Proxy changes define a new browsing generation. Cancel any old Keep
         // Alive worker here as a final safety net even if the orchestration layer
@@ -605,7 +659,8 @@ class BrowserManager extends node_events_1.EventEmitter {
             managed.view.webContents.stop();
         }
     }
-    stopGoogleRecognition(managed) {
+    stopGoogleRecognition(managed, expectedToken) {
+        if (arguments.length > 1 && managed.googleConfig?.token !== expectedToken) return;
         const active = Boolean(managed.googleConfig);
         managed.googleConfig = null;
         managed.googleState = null;
@@ -715,6 +770,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 await delay(25);
             }
             if (loadError && !managed.googleState) {
+                if (managed.state.proxy) managed.proxyHealth.failed = true;
                 wc.stop();
                 this.updateState(managed, {
                     loading: false,
@@ -725,6 +781,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             }
             const currentUrl = wc.getURL();
             if (!isGoogleSearchResultsUrl(currentUrl) && !extractGoogleBlockContinueUrl(currentUrl) && !promptPending()) {
+                if (managed.state.proxy) managed.proxyHealth.failed = true;
                 const message = `Google navigation timed out while using this proxy (current page: ${currentUrl || 'none'}).`;
                 wc.stop();
                 this.updateState(managed, {
@@ -784,7 +841,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             while (Date.now() < watchDeadline) {
                 if (measurementToken != null &&
                     !this.isMeasurementSessionCurrent(id, measurementToken)) {
-                    this.stopGoogleRecognition(managed);
+                    this.stopGoogleRecognition(managed, measurementToken);
                     return {
                         browserId: id,
                         status: 'monitoring',
@@ -798,7 +855,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 const activeUrl = wc.getURL();
                 if (promptPending()) { await delay(100); continue; }
                 if (extractGoogleBlockContinueUrl(activeUrl)) {
-                    this.stopGoogleRecognition(managed);
+                    this.stopGoogleRecognition(managed, measurementToken);
                     return {
                         browserId: id,
                         status: 'paused',
@@ -836,12 +893,12 @@ class BrowserManager extends node_events_1.EventEmitter {
                 }
                 if (managed.googleState) watcher = managed.googleState;
                 if (watcher?.recognitionError) {
-                    this.stopGoogleRecognition(managed);
+                    this.stopGoogleRecognition(managed, measurementToken);
                     return { browserId: id, status: 'error', monitoring: true, landedUrl: wc.getURL(),
                         error: `Google result recognition failed: ${watcher.recognitionError}`, ranAt };
                 }
                 if (watcher?.blocked) {
-                    this.stopGoogleRecognition(managed);
+                    this.stopGoogleRecognition(managed, measurementToken);
                     return {
                         browserId: id,
                         status: 'paused',
@@ -859,7 +916,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                         let matched = watcher.match;
                         if (!(0, seo_1.hostMatchesTarget)(matched.url, targetHost) &&
                             !(!matched.url && matched.unresolved && matched.displayedHost === targetHost)) {
-                            this.stopGoogleRecognition(managed);
+                            this.stopGoogleRecognition(managed, measurementToken);
                             return { browserId: id, status: 'error', error: 'Detected result destination did not match the target website.', ranAt };
                         }
                         if (matched.clickPoint &&
@@ -940,7 +997,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                         const finalLanding = verifyTargetLanding();
                         if (finalLanding.result) return finalLanding.result;
                         if (!(0, seo_1.hostMatchesTarget)(matched.url, targetHost)) {
-                            this.stopGoogleRecognition(managed);
+                            this.stopGoogleRecognition(managed, measurementToken);
                             totalScanned += pageMaxObserved;
                             return { browserId: id, status: 'matched', landedUrl: finalLanding.url,
                                 matchedTitle: matched.title, resultsScanned: totalScanned,
@@ -1035,7 +1092,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                     error: watcher ? `Watching ${watcher.observedResults || 0} candidate results for ${targetHost}; keeping this page active.${recognitionNote(watcher)}` :
                         'The Google result observer has not responded; keeping this page active.', ranAt };
             }
-            this.stopGoogleRecognition(managed);
+            this.stopGoogleRecognition(managed, measurementToken);
             if (wc.isLoading())
                 wc.stop();
             // Only a page with no target text is allowed to paginate.
