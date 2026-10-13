@@ -69,6 +69,9 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                     if (url.pathname === '/favicon.ico') return new Response('', { status: 204 });
                     if (url.hostname === 'appareldiary.com') {
                         trace.targetRequests++;
+                        // Reproduce a target whose first click starts loading
+                        // before its URL commits, as on a busy Windows runner.
+                        if (id === 613) await new Promise(resolve => later(resolve, 300));
                         return new Response(html('<h1>Article</h1>') + '</body></html>', { headers: { 'Content-Type': 'text/html' } });
                     }
                     if (url.hostname === 'www.google.com') trace.searches++;
@@ -108,7 +111,8 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 if (result.interactionStatus !== 'opened' || result.resultPage !== 1)
                     throw new Error(`${mode}: failed to open after prompt: ${JSON.stringify({ result, trace, choices, url: managed.view.webContents.getURL() })}`);
                 if (choices.rejected || choices.unrelated) throw new Error(`${mode}: clicked the wrong button`);
-                if (trace.targetRequests !== 1 || choices.titleClicked !== '1') throw new Error(`${mode}: target was not opened by its result title exactly once`);
+                if (trace.targetRequests !== 1 || choices.titleClicked !== '1')
+                    throw new Error(`${mode}: target was not opened by its result title exactly once: ${JSON.stringify({ id, trace, choices })}`);
                 if (mode !== 'standalone' && (!trace.targetMatch?.loading || trace.targetMatch.parsed || trace.finishedBeforeMatch))
                     throw new Error(`${mode}: waited for parsing/full loading: ${JSON.stringify(trace)}`);
                 if (['overlay', 'combined', 'fleet', 'standalone'].includes(mode) && choices.accepted !== '1') throw new Error(`${mode}: Accept all was not clicked`);

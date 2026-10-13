@@ -303,6 +303,9 @@ class BrowserManager extends node_events_1.EventEmitter {
             }
         });
         wc.on('did-start-loading', () => this.updateState(managed, { loading: true, connectionStatus: 'loading', errorMessage: undefined }));
+        wc.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+            if (isMainFrame && !isInPlace) managed.mainNavigationSequence = (managed.mainNavigationSequence || 0) + 1;
+        });
         wc.on('dom-ready', () => {
             if (extractGoogleBlockContinueUrl(wc.getURL()))
                 return;
@@ -919,6 +922,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                             this.stopGoogleRecognition(managed, measurementToken);
                             return { browserId: id, status: 'error', error: 'Detected result destination did not match the target website.', ranAt };
                         }
+                        const navigationBeforeClick = managed.mainNavigationSequence || 0;
                         if (matched.clickPoint &&
                             Number.isFinite(matched.clickPoint.x) &&
                             Number.isFinite(matched.clickPoint.y)) {
@@ -932,12 +936,20 @@ class BrowserManager extends node_events_1.EventEmitter {
                             catch {
                                 // The isolated preload will activate the anchor.
                             }
-                            await delay(100);
+                            const activationDeadline = Date.now() + 500;
+                            while ((managed.mainNavigationSequence || 0) === navigationBeforeClick &&
+                                isGoogleSearchResultsUrl(wc.getURL()) && Date.now() < activationDeadline &&
+                                (measurementToken == null || this.isMeasurementSessionCurrent(id, measurementToken))) {
+                                await delay(25);
+                            }
                         }
                         if (measurementToken != null && !this.isMeasurementSessionCurrent(id, measurementToken)) {
                             return { browserId: id, status: 'monitoring', landedUrl: wc.getURL(), monitoring: true, ranAt };
                         }
-                        if (isGoogleSearchResultsUrl(wc.getURL())) {
+                        if (isGoogleSearchResultsUrl(wc.getURL()) && (managed.mainNavigationSequence || 0) === navigationBeforeClick) {
+                            // A native click can already be navigating while
+                            // getURL still reports Google. Activate through the
+                            // preload only if that click started no navigation.
                             wc.send('dom:google-click', managed.googleConfig.navigation);
                         }
                         const verifyTargetLanding = () => {

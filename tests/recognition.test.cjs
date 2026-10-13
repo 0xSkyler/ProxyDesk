@@ -36,6 +36,31 @@ test('an outgoing search cannot remove the next cycle’s observer when its canc
         assert.equal(managed.googleState.observedResults, 1);
     } finally { await manager.destroyAll(); }
 });
+test('a native result navigation is not clicked again while its target URL is still uncommitted', async () => {
+    const { manager, wc, publish } = await setup();
+    const target = 'https://appareldiary.com/article';
+    let nativeClicks = 0, preloadClicks = 0;
+    wc.isLoading = () => true;
+    wc.loadURL = async url => {
+        wc.url = url;
+        setImmediate(() => publish({ observedResults: 1, documentParsed: false, targetTextSeen: true,
+            match: { url: target, title: 'Visible title', organicIndex: 0, clickPoint: { x: 20, y: 30 } } }));
+    };
+    wc.sendInputEvent = event => {
+        if (event.type === 'mouseUp') {
+            nativeClicks++;
+            wc.emit('did-start-navigation', {}, target, false, true);
+            setTimeout(() => { wc.url = target; }, 300);
+        }
+    };
+    wc.send = channel => { if (channel === 'dom:google-click') preloadClicks++; };
+    try {
+        const result = await manager.broadcastSearch(1, 'first', 'appareldiary.com', 5, manager.startMeasurementSession(1));
+        assert.equal(result.interactionStatus, 'opened');
+        assert.equal(nativeClicks, 1);
+        assert.equal(preloadClicks, 0, 'pending navigation must not receive a duplicate DOM fallback click');
+    } finally { await manager.destroyAll(); }
+});
 test('a visible first-page target opens while loadURL and executeJavaScript never settle', async () => {
     const { manager, managed, wc, publish } = await setup();
     let scriptCalls = 0;

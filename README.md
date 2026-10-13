@@ -1,4 +1,4 @@
-# DOM v0.5.18
+# DOM v0.5.19
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -94,6 +94,11 @@ Ready nor full-page loading is required. The delayed-first-byte native case
 verifies that a five-second target response opens successfully. An ignored click
 still fails without direct-URL navigation.
 
+The native result click is observed through its navigation-start event. If the
+article is already loading but its URL has not committed, the preload fallback
+does not activate the title a second time. A missing or ignored native activation
+still uses the existing preload path, and target landing is verified before Keep Alive.
+
 ## Google prompts and per-cycle cache cleanup
 
 Each browser automatically clicks Google’s **Accept all** button when its cookie
@@ -106,8 +111,8 @@ and its matching result is opened through the actual result-title click.
 
 Before each proxy cycle, DOM stops outgoing browser work, releases its page through
 a local blank document, and clears every selected browser’s HTTP cache, renderer
-memory cache and Cache Storage. Healthy proxy routing remains assigned throughout. Cleanup runs two browsers at a
-time, finishes before proxy fetching/searching starts, and retains cookies so
+memory cache and Cache Storage. Healthy proxy routing remains assigned throughout.
+Cleanup runs two browsers at a time, finishes before proxy fetching/searching starts, and retains cookies so
 Google’s accepted consent choice survives. A failed cleanup reports an error
 instead of starting searches with a cache that could be cleared late. Stop cancels
 the wait immediately.
@@ -189,7 +194,7 @@ provider list while reserving retained endpoints and excluding just-failed ones.
 
 ### Windows download
 
-[Download DOM v0.5.18 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.18/DOM-v0.5.18-Windows-x64-Setup.exe)
+[Download DOM v0.5.19 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.19/DOM-v0.5.19-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -207,7 +212,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.18-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.19-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -230,14 +235,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.18-linux-x86_64.AppImage
-./DOM-v0.5.18-linux-x86_64.AppImage
+chmod +x DOM-v0.5.19-linux-x86_64.AppImage
+./DOM-v0.5.19-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.18-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.19-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -252,7 +257,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.18-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.19-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -268,7 +273,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.18-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.19-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -292,7 +297,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch or `v0.5.18` tag CI publishes the immutable `v0.5.18-linux.1` release
+Main-branch or `v0.5.19` tag CI publishes the immutable `v0.5.19-linux.1` release
 only after native build, packaged smoke tests and original/optimized fixture
 comparison succeed. Windows and Ubuntu tag workflows publish the same tested
 application source using their workflow tokens.
