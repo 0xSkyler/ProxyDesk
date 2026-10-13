@@ -38,7 +38,14 @@ function fakeElectron() {
         setWindowOpenHandler(handler) { this.openHandler = handler; }
         reload() { this.reloaded = true; }
         executeJavaScript() { return Promise.resolve({}); }
-        send(channel, ...args) { this.sent = [...(this.sent || []), { channel, args }]; }
+        send(channel, ...args) {
+            this.sent = [...(this.sent || []), { channel, args }];
+            if (channel === 'dom:clear-renderer-cache') {
+                this.mainFrame ||= { processId: 1, routingId: this.id };
+                setImmediate(() => this.emit('ipc-message', { senderFrame: this.mainFrame },
+                    'dom:renderer-cache-cleared', { requestId: args[0] }));
+            }
+        }
     }
     class BrowserView {
         constructor(options) { this.options = options; this.webContents = new WebContents(); views.push(this); }

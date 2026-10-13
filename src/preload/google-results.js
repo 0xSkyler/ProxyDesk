@@ -3,6 +3,79 @@
 // Shared by the sandboxed BrowserView preload and the main-process script
 // builders. Keep these functions self-contained: sandboxed preloads cannot
 // require application modules, and the same recognizer must handle every path.
+function inspectGooglePrompt() {
+    const google = /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(location.hostname);
+    if (!google) return null;
+    const clean = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+    const consentPage = /^consent\./i.test(location.hostname);
+    let verification = false;
+    const captcha = document.querySelector('form[action*="/sorry/"], #captcha-form, iframe[src*="recaptcha"], .g-recaptcha');
+    const visible = node => {
+        if (!node?.isConnected || node.closest('[hidden],[inert]')) return false;
+        const style = getComputedStyle(node);
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' &&
+            [...node.getClientRects()].some(rect => rect.width && rect.height);
+    };
+    let consent = consentPage;
+    for (const button of document.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"]')) {
+        const label = clean(button.innerText || button.textContent || button.value || button.getAttribute('aria-label'));
+        const accept = /^accept all$/i.test(label);
+        const proceed = /^continue$/i.test(label);
+        if ((!accept && !proceed) || !visible(button)) continue;
+        if (proceed && !captcha) {
+            const body = clean(document.body?.innerText || document.body?.textContent);
+            verification = /verifying your request|you['’]ll be able to continue in a few seconds/i.test(body);
+        }
+        const scope = button.closest('[role="dialog"],dialog,form,#CXQnmb,#VnjCcb') || button.parentElement?.parentElement;
+        const context = clean(scope?.innerText || scope?.textContent);
+        const cookieContext = consentPage || button.id === 'L2AGLb' ||
+            /before you continue|we use cookies|use cookies and data|privacy tools|g\.co\/privacytools/i.test(context);
+        if (accept && cookieContext) consent = true;
+        if (!(accept && cookieContext) && !(proceed && (consentPage || verification) && !captcha)) continue;
+        const disabled = button.disabled || button.matches(':disabled') || button.getAttribute('aria-disabled') === 'true' ||
+            getComputedStyle(button).pointerEvents === 'none';
+        return { kind: accept ? 'consent' : 'verification', button: disabled ? null : button };
+    }
+    return consent ? { kind: 'consent', button: null } : verification && !captcha ? { kind: 'verification', button: null } : null;
+}
+
+// Every BrowserView has its own preload and observer. This remains active on
+// consent.google.com and verification documents, where the result scanner is
+// intentionally inactive. No load/Ready event is needed to press a new button.
+function installGooglePromptObserver(publish = () => {}) {
+    window.__domGooglePromptWatcher?.stop();
+    let scheduled = null, stopped = false, fingerprint = '';
+    const clicked = new WeakSet();
+    const watcher = { state: null, stop };
+    function scan() {
+        scheduled = null;
+        if (stopped) return;
+        const prompt = inspectGooglePrompt();
+        watcher.state = prompt ? { kind: prompt.kind, enabled: Boolean(prompt.button) } : null;
+        const next = JSON.stringify(watcher.state);
+        if (next !== fingerprint) { fingerprint = next; publish(watcher.state); }
+        if (prompt?.button && !clicked.has(prompt.button)) {
+            clicked.add(prompt.button);
+            prompt.button.focus({ preventScroll: true });
+            prompt.button.click();
+            schedule();
+        }
+    }
+    function schedule() { if (!stopped && !scheduled) scheduled = setTimeout(scan, 40); }
+    function stop() {
+        stopped = true; observer.disconnect(); clearTimeout(scheduled); clearInterval(heartbeat);
+        document.removeEventListener('readystatechange', schedule);
+    }
+    const observer = new MutationObserver(schedule);
+    observer.observe(document, { childList: true, subtree: true, characterData: true, attributes: true,
+        attributeFilter: ['disabled', 'aria-disabled', 'aria-label', 'class', 'style', 'hidden', 'inert'] });
+    const heartbeat = setInterval(schedule, 500);
+    document.addEventListener('readystatechange', schedule);
+    window.__domGooglePromptWatcher = watcher;
+    scan();
+    return watcher;
+}
+
 function recognizeGoogleResults(targetHost, query = '') {
     function clean(text) {
         return String(text || '').normalize('NFKC')
@@ -81,6 +154,8 @@ function recognizeGoogleResults(targetHost, query = '') {
     }
     const state = { blocked: false, observedResults: 0, signature: '', targetTextSeen: false, candidateText: '',
         documentParsed: document.readyState !== 'loading', nextPage: false, paginationRendered: false, pendingResults: false };
+    const prompt = inspectGooglePrompt();
+    if (prompt) { state.googlePrompt = prompt.kind; state.pendingResults = true; return { state, anchor: null }; }
     const blockedUrl = /\/sorry\/|^https?:\/\/consent\.google\./i.test(location.href);
     const challenge = document.querySelector('form[action*="/sorry/"], #captcha-form, iframe[src*="recaptcha"], .g-recaptcha');
     if (blockedUrl || challenge) { state.blocked = true; return { state, anchor: null }; }
@@ -388,6 +463,7 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
     }
     function click() {
         if (stopped) return false;
+        if (inspectGooglePrompt()) { scan(true); return false; }
         if (!matchedAnchor?.isConnected) {
             // Hydration/click handlers can replace the title after recognition.
             // Activate the current result element instead of a detached node.
@@ -421,8 +497,25 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
 }
 
 if (typeof process !== 'undefined' && process.type === 'renderer') {
-    const { ipcRenderer } = require('electron');
+    const { ipcRenderer, webFrame } = require('electron');
     let active = null;
+    ipcRenderer.on('dom:clear-renderer-cache', (_event, requestId) => {
+        try {
+            webFrame.clearCache();
+            ipcRenderer.send('dom:renderer-cache-cleared', { requestId });
+        } catch (error) {
+            ipcRenderer.send('dom:renderer-cache-cleared', { requestId, error: String(error.message || error) });
+        }
+    });
+    if (window === window.top && /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(location.hostname)) {
+        installGooglePromptObserver(state => {
+            ipcRenderer.send('dom:google-prompt-state', { documentUrl: location.href, state });
+            // Revoke a stale target match if a dialog appears, and immediately
+            // rescan the same result page when that dialog disappears.
+            window.__domGoogleWatcher?.scan(true);
+        });
+        addEventListener('pagehide', () => window.__domGooglePromptWatcher?.stop(), { once: true });
+    }
     ipcRenderer.on('dom:google-config', (_event, config) => {
         const existing = window.__domGoogleWatcher;
         if (!config) { existing?.stop(); active = null; return; }
@@ -453,5 +546,5 @@ if (typeof process !== 'undefined' && process.type === 'renderer') {
     // This handshake runs at document start, before DOMContentLoaded or load.
     ipcRenderer.send('dom:google-preload-ready');
 } else if (typeof module !== 'undefined') {
-    module.exports = { recognizeGoogleResults, installGoogleResultObserver };
+    module.exports = { inspectGooglePrompt, installGooglePromptObserver, recognizeGoogleResults, installGoogleResultObserver };
 }

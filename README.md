@@ -1,4 +1,4 @@
-# DOM v0.5.16
+# DOM v0.5.17
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -94,6 +94,29 @@ Ready nor full-page loading is required. The delayed-first-byte native case
 verifies that a five-second target response opens successfully. An ignored click
 still fails without direct-URL navigation.
 
+## Google prompts and per-cycle cache cleanup
+
+Each browser automatically clicks Google’s **Accept all** button when its cookie
+consent dialog or separate consent page appears. It also clicks **Continue** on
+Google’s request-verification screen once the button is enabled. Disabled buttons
+remain untouched until enabled; CAPTCHA controls and unrelated website buttons
+remain available for manual interaction. Both handlers run in each browser’s
+preload while the page is still loading. The same search resumes after dismissal,
+and its matching result is opened through the actual result-title click.
+
+Before each proxy cycle, DOM stops the outgoing browser work and clears every
+selected browser’s HTTP cache, renderer memory cache and Cache Storage. Cleanup runs two browsers at a
+time, finishes before proxy fetching/searching starts, and retains cookies so
+Google’s accepted consent choice survives. A failed cleanup reports an error
+instead of starting searches with a cache that could be cleared late. Stop cancels
+the wait immediately.
+
+`node scripts/smoke-google-prompts.cjs` exercises late cookie overlays, delayed
+Continue buttons, sequential prompts, a separate consent redirect, independent
+browser sessions, and native HTTP/Cache Storage cleanup. It also checks that
+Reject all, unrelated Continue buttons, and CAPTCHA controls are not activated.
+Pass a packaged executable to run against the installed application’s code.
+
 ## Keep Alive reading pace
 
 Keep Alive scrolls forward at approximately 450 words per minute, with a maximum
@@ -152,7 +175,7 @@ new portion of a stable provider list instead of reusing its first entries.
 
 ### Windows download
 
-[Download DOM v0.5.16 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.16/DOM-v0.5.16-Windows-x64-Setup.exe)
+[Download DOM v0.5.17 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.17/DOM-v0.5.17-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -170,7 +193,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.16-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.17-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -193,14 +216,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.16-linux-x86_64.AppImage
-./DOM-v0.5.16-linux-x86_64.AppImage
+chmod +x DOM-v0.5.17-linux-x86_64.AppImage
+./DOM-v0.5.17-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.16-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.17-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -215,7 +238,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.16-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.17-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -231,7 +254,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.16-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.17-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -255,7 +278,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch or `v0.5.16` tag CI publishes the immutable `v0.5.16-linux.1` release
+Main-branch or `v0.5.17` tag CI publishes the immutable `v0.5.17-linux.1` release
 only after native build, packaged smoke tests and original/optimized fixture
 comparison succeed. Windows and Ubuntu tag workflows publish the same tested
 application source using their workflow tokens.
@@ -314,8 +337,9 @@ old runtime: upgrading Electron/Chromium should be a separate compatibility task
 with proxy, BrowserView, rendering and long-session regression evidence. BrowserView
 is retained to avoid an unverified UI/runtime migration. Chromium browser content
 is the dominant cost at high concurrency; eliminating bundled duplicate npm
-packages will not make 100 real pages inexpensive. No scheduled cookie/cache
-purge, scheduled task restart, browser pooling or concurrency reduction is added.
+packages will not make 100 real pages inexpensive. Browser caches clear before
+each proxy cycle, while cookies retain Google’s consent choice. Scheduled task
+restart, browser pooling or concurrency reduction is not added.
 
 The shipped reference has no persistent settings / Save Settings control.
 This optimization preserves its defaults and React input behavior; it does not

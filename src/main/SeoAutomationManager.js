@@ -273,14 +273,32 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.emitState();
         const seoTasks = [];
         try {
-            // Every rotation starts from a clean browser routing state.
+            // Stop all outgoing work before clearing any session's cache.
             for (const id of browserIds) {
                 if (!this.isCurrent(generation))
                     return;
                 this.browserManager.cancelMeasurementSession(id);
                 this.browserManager.setBrowserKeepAlive(id, false, false);
-                await this.browserManager.assignProxy(id, null);
             }
+            const cleanupController = this.cycleController;
+            const signal = cleanupController.signal;
+            let nextBrowser = 0;
+            const cleanBrowser = async () => {
+                while (nextBrowser < browserIds.length && this.isCurrent(generation) && !signal.aborted) {
+                    const id = browserIds[nextBrowser++];
+                    await waitForPreparation(this.browserManager.assignProxy(id, null), 15_000, signal,
+                        `Browser ${id} proxy reset timed out before the next cycle.`);
+                    if (!this.isCurrent(generation) || signal.aborted) return;
+                    await waitForPreparation(this.browserManager.clearCache(id), 15_000, signal,
+                        `Browser ${id} cache cleanup timed out; no new searches were started.`);
+                }
+            };
+            // Bound native cleanup to two browsers at a time on small PCs.
+            // Proxy fetching/searching cannot start until every cache is clean.
+            try {
+                await Promise.all(Array.from({ length: Math.min(2, browserIds.length) }, cleanBrowser));
+            } catch (error) { cleanupController.abort(); throw error; }
+            if (!this.isCurrent(generation) || signal.aborted) return;
             await this.proxyManager.fetchAssignDirect(browserIds, (assignment) => {
                 if (!this.isCurrent(generation))
                     return;

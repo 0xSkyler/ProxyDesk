@@ -16,7 +16,7 @@ const { existsSync } = require('node:fs');
 const { join } = require('node:path');
 const constants_1 = require("../shared/constants");
 const seo_1 = require("../shared/seo");
-const { recognizeGoogleResults, installGoogleResultObserver } = require('../preload/google-results');
+const { inspectGooglePrompt, recognizeGoogleResults, installGoogleResultObserver } = require('../preload/google-results');
 const Logger_1 = require("./Logger");
 const { withTimeout, waitForPreparation, preparationCancelled } = require("./runtime");
 /** Cap on automatic proxy swaps triggered by hitting Google's CAPTCHA page
@@ -54,6 +54,12 @@ function extractGoogleBlockContinueUrl(url) {
         return null;
     const continueParam = parsed.searchParams.get('continue');
     return continueParam || url;
+}
+function isGoogleConsentUrl(value) {
+    try {
+        const url = new URL(value);
+        return /^https?:$/.test(url.protocol) && /^consent\.google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(url.hostname);
+    } catch { return false; }
 }
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- standard Node EventEmitter typed-events pattern
 class BrowserManager extends node_events_1.EventEmitter {
@@ -258,9 +264,23 @@ class BrowserManager extends node_events_1.EventEmitter {
                 // A queued handshake can outlive its render frame on Stop.
                 return;
             }
+            if (channel === 'dom:renderer-cache-cleared') {
+                if (managed.rendererCacheRequest?.requestId === payload?.requestId)
+                    managed.rendererCacheRequest.finish(payload.error);
+                return;
+            }
             if (channel === 'dom:google-preload-ready') {
                 try { event.reply('dom:google-config', managed.googleConfig || null); }
                 catch { /* Navigation or cancellation disposed the sender frame. */ }
+                return;
+            }
+            if (channel === 'dom:google-prompt-state') {
+                try {
+                    const url = new URL(payload?.documentUrl);
+                    if (payload.documentUrl !== wc.getURL() || !/^https?:$/.test(url.protocol) ||
+                        !/(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(url.hostname)) return;
+                    managed.googlePromptState = payload;
+                } catch { /* Ignore a prompt report from a replaced document. */ }
                 return;
             }
             const config = managed.googleConfig;
@@ -454,7 +474,31 @@ class BrowserManager extends node_events_1.EventEmitter {
         await this.get(id).session.clearStorageData({ storages: ['cookies'] });
     }
     async clearCache(id) {
-        await this.get(id).session.clearCache();
+        const managed = this.get(id);
+        if (managed.cacheClearing) return managed.cacheClearing;
+        // Keep cookies (including Google's consent choice), while removing
+        // HTTP resources, renderer memory and Cache Storage before a new cycle.
+        const work = Promise.allSettled([
+            this.clearRendererCache(managed), managed.session.clearCache(), managed.session.clearStorageData({ storages: ['cachestorage'] })
+        ]).then(results => {
+            const failed = results.find(result => result.status === 'rejected');
+            if (failed) throw failed.reason;
+        });
+        managed.cacheClearing = work;
+        try { await work; } finally { if (managed.cacheClearing === work) managed.cacheClearing = null; }
+    }
+    async clearRendererCache(managed) {
+        const requestId = (managed.rendererCacheSequence || 0) + 1;
+        managed.rendererCacheSequence = requestId;
+        const complete = new Promise((resolve, reject) => {
+            managed.rendererCacheRequest = { requestId, finish: error => error ? reject(new Error(error)) : resolve() };
+            managed.view.webContents.send('dom:clear-renderer-cache', requestId);
+        });
+        try {
+            await withTimeout(complete, 5_000, () => { throw new Error(`Browser ${managed.id} memory cache cleanup did not respond.`); });
+        } finally {
+            if (managed.rendererCacheRequest?.requestId === requestId) managed.rendererCacheRequest = null;
+        }
     }
     async openDevTools(id) {
         const wc = this.get(id).view.webContents;
@@ -626,6 +670,13 @@ class BrowserManager extends node_events_1.EventEmitter {
         // Reloading it on every retry can erase a slow proxy's visible results
         // immediately before their title links become usable.
         const config = managed.googleConfig;
+        const promptPending = () => isGoogleConsentUrl(wc.getURL()) ||
+            Boolean(managed.googlePromptState?.documentUrl === wc.getURL() && managed.googlePromptState.state);
+        const waitingForPrompt = () => ({ browserId: id, status: 'monitoring', landedUrl: wc.getURL(),
+            monitoring: true, resultsScanned: totalScanned,
+            error: 'Waiting for Google’s consent or Continue button; this page stays active until it can proceed.', ranAt });
+        if (config && config.token === measurementToken && config.target === targetHost &&
+            config.query === query.trim() && promptPending()) return waitingForPrompt();
         let resumePage = -1;
         try {
             const current = new URL(wc.getURL());
@@ -659,7 +710,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 if (measurementToken != null && !this.isMeasurementSessionCurrent(id, measurementToken)) return;
                 const current = wc.getURL();
                 this.requestGoogleState(managed);
-                if (extractGoogleBlockContinueUrl(current) || managed.googleState) return;
+                if (extractGoogleBlockContinueUrl(current) || promptPending() || managed.googleState) return;
                 if (loadError) break;
                 await delay(25);
             }
@@ -673,7 +724,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 throw new Error(loadError);
             }
             const currentUrl = wc.getURL();
-            if (!isGoogleSearchResultsUrl(currentUrl) && !extractGoogleBlockContinueUrl(currentUrl)) {
+            if (!isGoogleSearchResultsUrl(currentUrl) && !extractGoogleBlockContinueUrl(currentUrl) && !promptPending()) {
                 const message = `Google navigation timed out while using this proxy (current page: ${currentUrl || 'none'}).`;
                 wc.stop();
                 this.updateState(managed, {
@@ -745,6 +796,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 }
                 this.requestGoogleState(managed);
                 const activeUrl = wc.getURL();
+                if (promptPending()) { await delay(100); continue; }
                 if (extractGoogleBlockContinueUrl(activeUrl)) {
                     this.stopGoogleRecognition(managed);
                     return {
@@ -960,6 +1012,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 await delay(100);
             }
             totalScanned += pageMaxObserved;
+            if (promptPending() || watcher?.googlePrompt) return waitingForPrompt();
             if (watcher?.targetTextSeen) {
                 return {
                     browserId: id,
@@ -1051,6 +1104,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         if (this.window && !this.window.isDestroyed()) this.window.removeBrowserView(managed.view);
         if (!managed.view.webContents.isDestroyed()) managed.view.webContents.close({ waitForBeforeUnload: false });
         const cleanup = Promise.resolve(managed.proxyChange).catch(() => {}).then(() => Promise.allSettled([
+            managed.cacheClearing,
             managed.session.closeAllConnections(),
             managed.session.clearStorageData(),
             managed.session.clearCache(),
@@ -1624,6 +1678,7 @@ function isGoogleSearchResultsUrl(url) {
 }
 function buildInstallGoogleLiveTargetObserverScript(targetHost, query = '') {
     return `(function() {
+        const inspectGooglePrompt = ${inspectGooglePrompt.toString()};
         const recognizeGoogleResults = ${recognizeGoogleResults.toString()};
         const installGoogleResultObserver = ${installGoogleResultObserver.toString()};
         return installGoogleResultObserver(${JSON.stringify(targetHost)}, ${JSON.stringify(query)}).state;
@@ -1640,6 +1695,7 @@ function buildStopGoogleLiveTargetObserverScript() {
 }
 function buildGoogleResultScanScript(targetHost, query = '') {
     return `(function() {
+        const inspectGooglePrompt = ${inspectGooglePrompt.toString()};
         const recognizeGoogleResults = ${recognizeGoogleResults.toString()};
         const state = recognizeGoogleResults(${JSON.stringify(targetHost)}, ${JSON.stringify(query)}).state;
         return Object.assign(state, { ready: state.observedResults > 0, resultsScanned: state.observedResults });
@@ -1647,6 +1703,7 @@ function buildGoogleResultScanScript(targetHost, query = '') {
 }
 function buildClickGoogleTargetResultScript(targetHost, query = '') {
     return `(function() {
+        const inspectGooglePrompt = ${inspectGooglePrompt.toString()};
         const recognizeGoogleResults = ${recognizeGoogleResults.toString()};
         const result = recognizeGoogleResults(${JSON.stringify(targetHost)}, ${JSON.stringify(query)});
         if (!result.anchor || !result.state.match) return false;
