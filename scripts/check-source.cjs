@@ -21,6 +21,7 @@ function visit(file) {
 }
 visit(path.join(root, 'src/main/main.js'));
 visit(path.join(root, 'src/preload/preload.js'));
+visit(path.join(root, 'src/preload/google-results.js'));
 for (const file of files(path.join(root, 'src'))) {
     if (file.endsWith('.node')) throw new Error(`Unrebuilt native module: ${file}`);
 }

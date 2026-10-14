@@ -101,7 +101,7 @@ class ProxyValidator {
                 agent,
                 signal: controller.signal,
                 timeout: timeoutMs,
-                headers: { 'User-Agent': 'ProxyDesk/1.0 (+proxy-validation)' }
+                headers: { 'User-Agent': 'DOM/1.0 (+proxy-validation)' }
             }, (res) => {
                 const chunks = [];
                 res.on('data', (chunk) => chunks.push(chunk));

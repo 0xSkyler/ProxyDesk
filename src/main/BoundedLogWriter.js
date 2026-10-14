@@ -36,7 +36,7 @@ class BoundedLogWriter {
                     this.failed = true;
                     this.queue = [];
                     this.queuedBytes = 0;
-                    console.error(`ProxyDesk file logging disabled for ${this.path}: ${error.message}`);
+                    console.error(`DOM file logging disabled for ${this.path}: ${error.message}`);
                 }).finally(() => {
                     this.work = null;
                     // A producer may enqueue after drain's last await but before
@@ -79,7 +79,7 @@ class BoundedLogWriter {
             await fs.appendFile(this.path, batch);
             this.size += batchBytes;
             if (this.dropped) {
-                console.warn(`ProxyDesk log backpressure: ${this.dropped} file entries omitted for ${this.path}; console logging continued.`);
+                console.warn(`DOM log backpressure: ${this.dropped} file entries omitted for ${this.path}; console logging continued.`);
                 this.dropped = 0;
             }
         }

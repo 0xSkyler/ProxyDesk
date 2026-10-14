@@ -1,6 +1,6 @@
 {
   "commit": "32194fdd8236a0486209b61f734f52530800c73a",
-  "installer": "ProxyDesk-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe",
+  "installer": "DOM-v0.5.4-MultiKeyword-AllWorking-Setup(1).exe",
   "installerSha256": "01f888ad8fd8d5f9e299504ba579d31c58fb9fd43d6b6efa2cd87ea5c81cdbc1",
   "files": {
     "dist/main/BrowserManager.js": "60b953b6010fbcf66e6d1363f4de3c7f14801d845e37a0c422d16bc65278a69d",

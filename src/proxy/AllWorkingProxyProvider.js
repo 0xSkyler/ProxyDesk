@@ -4,14 +4,14 @@ exports.ALL_WORKING_PROXY_URL = void 0;
 exports.fetchAllWorkingProxyText = fetchAllWorkingProxyText;
 exports.ALL_WORKING_PROXY_URL = 'http://169.58.35.69/data/all-working.txt';
 const REQUEST_TIMEOUT_MS = 15_000;
-async function fetchAllWorkingProxyText(signal) {
+async function fetchAllWorkingProxyText(signal, endpoint = exports.ALL_WORKING_PROXY_URL) {
     if (signal?.aborted) throw new Error('Proxy API request cancelled.');
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-        const response = await fetch(exports.ALL_WORKING_PROXY_URL, {
+        const response = await fetch(endpoint, {
             method: 'GET',
             headers: {
                 Accept: 'text/plain',

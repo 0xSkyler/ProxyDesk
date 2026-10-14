@@ -1,11 +1,19 @@
-name: Native Linux build and v0.5.4 regression
+name: DOM v0.5.21 Linux build and regression
 
 on:
   push:
     branches: [main]
+    tags: ['v0.5.21']
   pull_request:
   workflow_dispatch:
     inputs:
+      publish_release:
+        description: Publish the immutable Linux release after all checks pass
+        type: boolean
+        default: false
+      verified_run_id:
+        description: Optional successful run to publish without rebuilding its tested artifacts
+        default: ''
       soak_seconds:
         description: Local fixture active seconds per build (60 for CI, 3600+ for soak)
         default: '60'
@@ -22,6 +30,7 @@ concurrency:
 
 jobs:
   build-linux:
+    if: inputs.verified_run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -38,37 +47,45 @@ jobs:
       - run: npm run check
       - run: npm test
       - name: Check the bundled Electron Node runtime
-        run: ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron --test tests/*.test.cjs
+        run: node scripts/check-bundled-runtime.cjs
       - name: Build from tracked application source
         run: npm run package:linux
       - name: Check production archive
         run: node scripts/check-package.cjs
       - name: Packaged renderer and lifecycle smoke test
-        run: xvfb-run -a node scripts/benchmark.cjs release-linux/linux-unpacked . .measurements/smoke.json 2 3
+        run: xvfb-run -a node scripts/benchmark.cjs release-linux/linux-unpacked . .measurements/smoke.json 2 20
+      - name: Recognize and open progressively rendered Google results
+        run: xvfb-run -a node scripts/smoke-google-recognition.cjs release-linux/linux-unpacked/dom
+      - name: Verify selective proxy and keyword rotation
+        run: xvfb-run -a node scripts/smoke-proxy-rotation.cjs release-linux/linux-unpacked/dom
+      - name: Verify native Google prompts and cycle cache cleanup
+        run: xvfb-run -a node scripts/smoke-google-prompts.cjs release-linux/linux-unpacked/dom
+      - name: Verify forty-second full-page scrolling
+        run: xvfb-run -a node scripts/smoke-keep-alive-reading.cjs release-linux/linux-unpacked/dom
       - name: Verify AppImage startup and clean exit
         run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/ProxyDesk-v0.5.4-linux-x86_64.AppImage
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.21-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
       - name: Verify installed production sandbox
         run: |
-          sudo install -d -m 755 /opt/proxydesk/ci
-          sudo cp -a release-linux/linux-unpacked/. /opt/proxydesk/ci/
-          sudo chown -R root:root /opt/proxydesk/ci
-          sudo chmod -R go-w /opt/proxydesk/ci
-          sudo chmod 755 /opt/proxydesk/ci/proxydesk
-          sudo chmod 4755 /opt/proxydesk/ci/chrome-sandbox
+          sudo install -d -m 755 /opt/dom/ci
+          sudo cp -a release-linux/linux-unpacked/. /opt/dom/ci/
+          sudo chown -R root:root /opt/dom/ci
+          sudo chmod -R go-w /opt/dom/ci
+          sudo chmod 755 /opt/dom/ci/dom
+          sudo chmod 4755 /opt/dom/ci/chrome-sandbox
           python3 - <<'PY'
           from pathlib import Path
           installer = Path('deploy/install-ubuntu.sh').read_text()
           profile = installer.split("<<'PROFILE'\n", 1)[1].split('\nPROFILE', 1)[0]
-          Path('/tmp/proxydesk-linux').write_text(profile + '\n')
+          Path('/tmp/dom-linux').write_text(profile + '\n')
           PY
-          sudo apparmor_parser -r /tmp/proxydesk-linux
-          PROXYDESK_TEST_SANDBOX=1 xvfb-run -a node scripts/smoke-runtime.cjs /opt/proxydesk/ci/proxydesk
+          sudo apparmor_parser -r /tmp/dom-linux
+          DOM_TEST_SANDBOX=1 xvfb-run -a node scripts/smoke-runtime.cjs /opt/dom/ci/dom
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          name: DOM-v0.5.21-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
@@ -77,7 +94,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ProxyDesk-Linux-packaged-smoke
+          name: DOM-Linux-packaged-smoke
           path: |
             .measurements/smoke.json
             .measurements/appimage-smoke.log
@@ -85,7 +102,7 @@ jobs:
           retention-days: 30
 
   compare-runtime:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    if: inputs.verified_run_id == '' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'push')
     needs: build-linux
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -101,12 +118,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:
-          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          name: DOM-v0.5.21-Ubuntu-x64
           path: .measurements/download
       - name: Prepare packaged runtime and hash-verified reference (benchmark only)
         run: |
           mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/ProxyDesk-v0.5.4-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          tar -xzf .measurements/download/DOM-v0.5.21-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
           npm run recover
           node scripts/compare-reference.cjs
       - name: Measure original v0.5.4
@@ -128,7 +145,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ProxyDesk-Linux-baseline-comparison
+          name: DOM-Linux-baseline-comparison
           path: .measurements/*.json
           include-hidden-files: true
           if-no-files-found: error
@@ -136,35 +153,84 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ProxyDesk-Linux-comparison-report
+          name: DOM-Linux-comparison-report
           path: .measurements/comparison.md
           retention-days: 30
 
   publish-linux:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/v0.5.21')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
     needs: [build-linux, compare-runtime]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
+      - name: Select artifacts from a verified run
+        id: verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+        run: |
+          set -euo pipefail
+          RUN_ID="${VERIFIED_RUN_ID:-$GITHUB_RUN_ID}"
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > /tmp/dom-verified-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/dom-verified-jobs.json
+          node <<'JS'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const run = JSON.parse(fs.readFileSync('/tmp/dom-verified-run.json'));
+          const { jobs } = JSON.parse(fs.readFileSync('/tmp/dom-verified-jobs.json'));
+          assert.equal(run.repository.full_name, process.env.GITHUB_REPOSITORY);
+          assert.equal(run.path, '.github/workflows/build-ubuntu.yml');
+          assert.match(run.head_sha, /^[0-9a-f]{40}$/);
+          for (const name of ['build-linux', 'compare-runtime']) {
+            const job = jobs.find((job) => job.name === name);
+            assert.ok(job && job.status === 'completed' && job.conclusion === 'success', `${name} must pass in the selected run`);
+          }
+          if (process.env.VERIFIED_RUN_ID) {
+            assert.equal(run.status, 'completed');
+            assert.equal(run.conclusion, 'success');
+          } else {
+            assert.equal(run.head_sha, process.env.GITHUB_SHA);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `run_id=${run.id}\nsource_sha=${run.head_sha}\n`);
+          console.log(`Publishing tested artifacts from run ${run.id}, source ${run.head_sha}`);
+          JS
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.verified.outputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:
-          name: ProxyDesk-v0.5.4-Ubuntu-x64
+          name: DOM-v0.5.21-Ubuntu-x64
           path: release-linux
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
-          name: ProxyDesk-Linux-comparison-report
+          name: DOM-Linux-comparison-report
           path: release-linux
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
-          name: ProxyDesk-Linux-baseline-comparison
+          name: DOM-Linux-baseline-comparison
           path: release-linux
+          run-id: ${{ steps.verified.outputs.run_id }}
+          github-token: ${{ github.token }}
       - name: Publish verified Linux release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERIFIED_SOURCE_SHA: ${{ steps.verified.outputs.source_sha }}
         run: |
           set -euo pipefail
+          cat > /tmp/dom-linux-release-notes.md <<'NOTES'
+          DOM 0.5.21 retains a proxy only when its browser opened the configured target through a successful main-document response and had no CAPTCHA, connection failure or renderer failure during the outgoing cycle. Reaching Google, seeing a matching result and attempting a click do not qualify by themselves. Target success is recorded at navigation commit without waiting for Ready.
+
+          Google CAPTCHA redirects and inline search-page challenges permanently disqualify that proxy for the rest of the current cycle. Manual recovery and a later target opening cannot erase the flag. The proxy stays available until the next rotation, when it is dropped and a fresh unreserved endpoint is assigned. Recently disqualified endpoints cannot be reissued as that cycle’s replacements.
+
+          Each retained browser keeps its routing, clears its cache and moves to the next keyword. All-qualified cycles skip fetching. Google Accept all/Continue handling, immediate actual result-title clicks and forty-second full-page Keep Alive scrolling remain in place. Installed native validation exercises six browsers across three cycles: healthy retention, inline CAPTCHA followed by recovery, CAPTCHA redirects, Google without a target opening, initial connection failure and failure after the target opened. SHA-256 checksums are included.
+          NOTES
           TAG="$(node -p 'require("./package.json").linuxRelease')"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "$TAG is already published; its artifacts will not be overwritten."
@@ -173,4 +239,12 @@ jobs:
           cd release-linux
           sha256sum *.AppImage *.tar.gz > SHA256SUMS
           cd ..
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "ProxyDesk v0.5.4 - Linux reliability update ${TAG##*.}" --notes "Native source build. Original v0.5.4 UI and task behavior retained. Lifecycle cancellation, shutdown cleanup, log bounds and dependency packaging improvements; release unread proxy API error bodies; bounded cancellation listeners for 100 workspaces; desktop relaunch recovery after a display failure. Ubuntu CI regression tests run against the build Node and bundled Electron Node runtimes. AppImage renderer smoke, installed sandbox and paired original/optimized fixture checks passed. Longer VPS soak and live search regression remain environment-specific checks."
+          target_args=(--target "$VERIFIED_SOURCE_SHA")
+          if [[ "$VERIFIED_SOURCE_SHA" != "$GITHUB_SHA" ]]; then
+            # GITHUB_TOKEN cannot create a tag on another workflow commit.
+            # Historical publication requires a tag created with repository credentials.
+            git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            test "$(git rev-parse "$TAG^{commit}")" = "$VERIFIED_SOURCE_SHA"
+            target_args=(--verify-tag)
+          fi
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.21 for Ubuntu 24.04" --notes-file /tmp/dom-linux-release-notes.md

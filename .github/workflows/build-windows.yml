@@ -1,0 +1,111 @@
+name: DOM v0.5.21 Windows build and release
+
+on:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - name: Check the bundled Electron Node runtime
+        run: node scripts/check-bundled-runtime.cjs
+      - name: Build Windows installer from tracked source
+        run: npm run package:windows
+      - name: Check production archive
+        run: node scripts/check-package.cjs release-windows/win-unpacked/resources/app.asar
+      - name: Smoke test unpacked Windows application
+        run: node scripts/smoke-runtime.cjs release-windows/win-unpacked/DOM.exe
+      - name: Recognize and open results before Google finishes loading
+        run: node scripts/smoke-google-recognition.cjs release-windows/win-unpacked/DOM.exe
+      - name: Install into a clean directory
+        shell: pwsh
+        run: |
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.21-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.21-installed'
+          $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
+          $installedExecutable = Join-Path $installDirectory 'DOM.exe'
+          if (-not (Test-Path $installedExecutable)) { throw "Installed executable not found at $installedExecutable" }
+          "DOM_INSTALLED_EXE=$installedExecutable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Smoke test installed Windows application
+        shell: pwsh
+        run: node scripts/smoke-runtime.cjs "$env:DOM_INSTALLED_EXE"
+      - name: Verify recognition in the installed application
+        shell: pwsh
+        run: node scripts/smoke-google-recognition.cjs "$env:DOM_INSTALLED_EXE"
+      - name: Verify installed selective proxy and keyword rotation
+        shell: pwsh
+        run: node scripts/smoke-proxy-rotation.cjs "$env:DOM_INSTALLED_EXE"
+      - name: Verify installed Google prompts and cycle cache cleanup
+        shell: pwsh
+        run: node scripts/smoke-google-prompts.cjs "$env:DOM_INSTALLED_EXE"
+      - name: Verify forty-second full-page scrolling in the installed app
+        shell: pwsh
+        run: node scripts/smoke-keep-alive-reading.cjs "$env:DOM_INSTALLED_EXE"
+      - name: Create SHA-256 checksum
+        shell: pwsh
+        run: |
+          $installer = Get-Item 'release-windows/DOM-v0.5.21-Windows-x64-Setup.exe'
+          $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.21-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DOM-v0.5.21-Windows-x64
+          path: |
+            release-windows/DOM-v0.5.21-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.21-Windows-x64-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-windows:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: DOM-v0.5.21-Windows-x64
+          path: release-assets
+      - name: Publish verified Windows release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/dom-windows-release-notes.md <<'NOTES'
+          DOM 0.5.21 retains a proxy only when its browser opened the configured target through a successful main-document response and had no CAPTCHA, connection failure or renderer failure during the outgoing cycle. Reaching Google, seeing a matching result and attempting a click do not qualify by themselves. Target success is recorded at navigation commit without waiting for Ready.
+
+          Google CAPTCHA redirects and inline search-page challenges permanently disqualify that proxy for the rest of the current cycle. Manual recovery and a later target opening cannot erase the flag. The proxy stays available until the next rotation, when it is dropped and a fresh unreserved endpoint is assigned. Recently disqualified endpoints cannot be reissued as that cycle’s replacements.
+
+          Each retained browser keeps its routing, clears its cache and moves to the next keyword. All-qualified cycles skip fetching. Google Accept all/Continue handling, immediate actual result-title clicks and forty-second full-page Keep Alive scrolling remain in place. Installed native validation exercises six browsers across three cycles: healthy retention, inline CAPTCHA followed by recovery, CAPTCHA redirects, Google without a target opening, initial connection failure and failure after the target opened. SHA-256 checksums are included.
+          NOTES
+          TAG="$(node -p 'require("./package.json").windowsRelease')"
+          test "$GITHUB_REF_NAME" = "$TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already published; its artifacts will not be overwritten."
+            exit 0
+          else
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.21 for Windows" --notes-file /tmp/dom-windows-release-notes.md
+          fi
