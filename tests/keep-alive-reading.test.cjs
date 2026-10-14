@@ -36,64 +36,74 @@ async function finish(reading, hop = true, deadline = reading.time + 10_000) {
     assert.fail('Reading did not finish within its expected time');
 }
 
-test('each new page gets thirty seconds of forward reading before its next actual link click', async () => {
+test('each new article gets forty seconds of full-page down-and-up scrolling before an actual link click', async () => {
     const reading = reader();
     for (let page = 0; page < 2; page++) {
         const started = reading.time;
         assert.equal((await reading.run()).reading, true);
         assert.equal((await reading.run()).reading, true);
+        assert.equal((await reading.run()).reading, true);
         assert.equal(reading.clicks.length, page, 'chunks cannot bypass the dwell');
-        const result = await finish(reading, true, started + 31_000);
+        const result = await finish(reading, true, started + 41_000);
         assert.equal(result.clickedUrl, 'https://reading.test/article/' + (page + 2));
-        assert.ok(reading.clicks[page].at - started >= 30_000);
+        assert.ok(reading.clicks[page].at - started >= 40_000);
+        const positions = reading.scrolls.filter(s => s.page.endsWith('/' + (page + 1)));
+        assert.ok(positions.some(s => s.to > s.from), 'must scroll down');
+        assert.ok(positions.some(s => s.to < s.from), 'must scroll back up');
+        assert.equal(Math.max(...positions.map(s => s.to)), 800, 'must reach the page bottom');
+        assert.equal(positions.at(-1).to, 0, 'must return to the top');
     }
     assert.ok(reading.scrolls.length > 10);
-    assert.ok(reading.scrolls.every(s => s.to >= s.from), 'automatic scrolling cannot reverse direction');
 });
 
-test('long articles use the reading pace rather than leaving at the thirty-second minimum', async () => {
+test('a long article still completes its full-page pass in forty seconds', async () => {
     const reading = reader(900);
-    for (let i = 0; i < 11; i++) assert.equal((await reading.run()).reading, true);
+    reading.content.scrollHeight = 18_000;
+    for (let i = 0; i < 3; i++) assert.equal((await reading.run()).reading, true);
     assert.equal(reading.clicks.length, 0);
-    const result = await finish(reading, true, 121_000);
+    const result = await finish(reading, true, 41_000);
     assert.equal(result.clickedUrl, 'https://reading.test/article/2');
-    assert.ok(reading.clicks[0].at >= 120_000, '900 words need two minutes at 450 words/minute');
+    assert.ok(reading.clicks[0].at >= 40_000 && reading.clicks[0].at < 41_000);
+    assert.equal(Math.max(...reading.scrolls.map(s => s.to)), 17_200);
+    assert.equal(reading.scrolls.at(-1).to, 0);
 });
 
 test('scroll-only Keep Alive reads the page without following an internal link', async () => {
     const reading = reader();
     assert.equal((await reading.run(false)).reading, true);
     assert.equal((await reading.run(false)).reading, true);
-    assert.deepEqual(Object.keys(await finish(reading, false, 31_000)), []);
+    assert.deepEqual(Object.keys(await finish(reading, false, 41_000)), []);
     assert.equal(reading.clicks.length, 0);
-    assert.ok(reading.time >= 30_000);
+    assert.ok(reading.time >= 40_000);
 });
 
 test('a stalled navigation cannot cause another link click on the old document', async () => {
     const reading = reader(120, false);
-    await reading.run(); await reading.run(); await finish(reading, true, 31_000);
+    await reading.run(); await reading.run(); await finish(reading, true, 41_000);
     reading.advance(1_500);
     const result = await reading.run();
     assert.equal(result.reading, true);
     assert.equal(reading.clicks.length, 1);
 });
 
-test('lazy page growth cannot cause an abrupt reading jump', async () => {
+test('the scroll pass includes page height added by lazy content', async () => {
     const reading = reader();
     await reading.run();
     reading.content.scrollHeight = 9000;
-    await reading.run();
-    assert.equal(reading.clicks.length, 0);
-    assert.ok(reading.scrolls.every((s, i) => !i || s.to - s.from <= 120 * (s.at - reading.scrolls[i - 1].at) / 1000 + 1));
+    await finish(reading, true, 41_000);
+    assert.equal(Math.max(...reading.scrolls.map(s => s.to)), 8200);
+    assert.equal(reading.scrolls.at(-1).to, 0);
+    assert.ok(reading.clicks[0].at >= 40_000 && reading.clicks[0].at < 41_000);
 });
 
-test('combining marks stay within a word at the fast-reading pace', async () => {
-    const reading = reader(450);
-    reading.content.innerText = Array(450).fill('মেশিন').join(' ');
-    for (let i = 0; i < 5; i++) assert.equal((await reading.run()).reading, true);
-    await finish(reading, true, 61_000);
+test('a browser starting mid-article covers the top and bottom before its next click', async () => {
+    const reading = reader();
+    reading.window.scrollY = 400;
+    await finish(reading, true, 41_000);
     assert.equal(reading.clicks.length, 1);
-    assert.ok(reading.clicks[0].at >= 60_000 && reading.clicks[0].at < 61_000);
+    assert.equal(reading.scrolls[0].to, 0);
+    assert.equal(Math.max(...reading.scrolls.map(s => s.to)), 800);
+    assert.equal(reading.scrolls.at(-1).to, 0);
 });
 
 test('an unfinished reading chunk stays enabled even with the manual one-page limit', async () => {
@@ -111,5 +121,23 @@ test('an unfinished reading chunk stays enabled even with the manual one-page li
         assert.equal(browser.keepAliveHops, 0);
         assert.ok(browser.keepAliveNextAt > Date.now());
         assert.ok(browser.keepAliveNextAt - Date.now() < 2_000, 'reading must resume without a minute-long gap');
+    } finally { await manager.destroyAll(); }
+});
+
+test('manual Keep Alive starts the next article promptly after its internal link click', async () => {
+    const electron = fakeElectron();
+    const { BrowserManager: Manager } = loadTree(path.resolve(__dirname, '../src'), electron)('main/BrowserManager.js');
+    const manager = new Manager(); manager.attachWindow(electron.window);
+    await manager.createBrowser(1, { startPage: 'https://reading.test/article/1' });
+    const browser = manager.get(1);
+    manager.keepAliveIntervalMs = 60_000;
+    browser.keepAliveEnabled = true;
+    browser.view.webContents.executeJavaScript = async () => ({ clickedUrl: 'https://reading.test/article/2' });
+    try {
+        await manager.runKeepAliveAction(browser, browser.keepAliveGeneration);
+        assert.equal(browser.keepAliveEnabled, true);
+        assert.equal(browser.keepAliveHops, 1);
+        assert.ok(browser.keepAliveNextAt > Date.now());
+        assert.ok(browser.keepAliveNextAt - Date.now() < 2_000, 'the next article cannot wait another minute before scrolling');
     } finally { await manager.destroyAll(); }
 });

@@ -287,6 +287,28 @@ class BrowserManager extends node_events_1.EventEmitter {
                 } catch { /* Ignore a prompt report from a replaced document. */ }
                 return;
             }
+            if (channel === 'dom:google-prompt-click') {
+                const prompt = managed.googlePromptState;
+                if (!prompt?.state?.enabled || payload?.documentId !== prompt.documentId ||
+                    payload.documentUrl !== prompt.documentUrl || payload.documentUrl !== wc.getURL() ||
+                    payload.kind !== prompt.state.kind) return;
+                const point = payload.point, bounds = managed.view.getBounds();
+                if (!Number.isInteger(point?.x) || !Number.isInteger(point?.y) ||
+                    point.x < 0 || point.y < 0 || point.x >= bounds.width || point.y >= bounds.height) return;
+                const previous = managed.googlePromptClick;
+                // Do not retry the outgoing document after a native click has
+                // already started navigation, even before its new URL commits.
+                if (previous?.documentId === payload.documentId &&
+                    (previous.navigation !== managed.mainNavigationSequence || Date.now() - previous.at < 500)) return;
+                managed.googlePromptClick = { documentId: payload.documentId,
+                    navigation: managed.mainNavigationSequence, at: Date.now() };
+                try {
+                    wc.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+                    wc.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+                    wc.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+                } catch { /* Stop or navigation can dispose a pending prompt. */ }
+                return;
+            }
             const config = managed.googleConfig;
             if (channel !== 'dom:google-state' || !config || !payload ||
                 payload.navigation !== config.navigation || payload.token !== config.token ||
@@ -1562,8 +1584,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             }
             managed.keepAliveVisited.add(result.clickedUrl);
             managed.keepAliveHops += 1;
-            if (controlled)
-                managed.keepAliveNextAt = Date.now() + 1_500;
+            managed.keepAliveNextAt = Date.now() + 1_500;
             this.updateState(managed, {
                 keepAliveEnabled: true,
                 keepAliveHops: managed.keepAliveHops,
@@ -1614,41 +1635,32 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     );
     const maxScroll = () => Math.max(0, pageHeight() - window.innerHeight);
 
-    // State belongs to this document, so every real page navigation starts
-    // a new minimum dwell. Chunks retain progress without restarting at top.
+    // Every article gets its own forty-second down-and-up pass. Bounded
+    // chunks retain the clock so Stop and rotation remain responsive.
     const pageKey = () => typeof location === 'undefined' ? '' : String(location.href).split('#')[0];
     const now = performance.now();
     let reading = window.__domKeepAliveReading;
     if (!reading || reading.page !== pageKey()) {
-      reading = { page: pageKey(), startedAt: now, lastTickAt: now, startY: Math.max(0, window.scrollY || 0), duration: 30_000 };
+      reading = { page: pageKey(), startedAt: now, duration: 40_000 };
       window.__domKeepAliveReading = reading;
     }
     if (reading.clickedAt != null && now - reading.clickedAt < 8_500) return { reading: true };
     reading.clickedAt = undefined;
-    const content = document.querySelector?.('article') || document.querySelector?.('main,[role="main"]') || document.body;
-    const words = String(content?.innerText || content?.textContent || '').match(/[\\p{L}\\p{N}\\p{M}]+/gu)?.length || 0;
-    reading.duration = Math.max(reading.duration, 30_000, words * 60_000 / 450,
-      Math.max(0, maxScroll() - reading.startY) * 1000 / 120);
     const deadline = performance.now() + 10_000;
     while (performance.now() < deadline) {
       if (reading.page !== pageKey()) return { reading: true };
       const tickAt = performance.now();
       const elapsed = tickAt - reading.startedAt;
-      const progress = Math.min(1, elapsed / reading.duration);
-      const end = maxScroll();
-      const desired = reading.startY + Math.max(0, end - reading.startY) * progress;
-      // Lazy images/content can increase height. Bound the next movement so
-      // layout growth cannot jump past paragraphs that have just appeared.
-      const step = 120 * Math.min(1, Math.max(0, tickAt - reading.lastTickAt) / 1000);
-      reading.lastTickAt = tickAt;
-      const next = Math.min(desired, (window.scrollY || 0) + step);
-      // Native smooth scrolling avoids a per-frame JavaScript loop in every
-      // browser. Reading only advances; it does not cycle down and back up.
-      if (next > (window.scrollY || 0) + 1) window.scrollTo({ top: next, behavior: 'smooth' });
-      if (progress >= 1 && end - (window.scrollY || 0) <= 2) break;
+      // Hold briefly at both ends so native smooth scrolling reaches the
+      // entire page. Re-read its height to include lazy images and content.
+      const fraction = elapsed < 1_000 ? 0 : elapsed < 19_000 ? (elapsed - 1_000) / 18_000 :
+        elapsed < 21_000 ? 1 : elapsed < 39_000 ? (39_000 - elapsed) / 18_000 : 0;
+      const desired = maxScroll() * fraction;
+      if (Math.abs(desired - (window.scrollY || 0)) > 1) window.scrollTo({ top: desired, behavior: 'smooth' });
+      if (elapsed >= reading.duration) break;
       await wait(Math.min(200, Math.max(1, deadline - performance.now())));
     }
-    if (reading.page !== pageKey() || performance.now() - reading.startedAt < reading.duration || maxScroll() - (window.scrollY || 0) > 2)
+    if (reading.page !== pageKey() || performance.now() - reading.startedAt < reading.duration)
       return { reading: true };
 
     if (!${allowHop ? 'true' : 'false'}) return {};

@@ -1,4 +1,4 @@
-# DOM v0.5.19
+# DOM v0.5.20
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -103,7 +103,9 @@ still uses the existing preload path, and target landing is verified before Keep
 
 Each browser automatically clicks Google’s **Accept all** button when its cookie
 consent dialog or separate consent page appears. It also clicks **Continue** on
-Google’s request-verification screen once the button is enabled. Disabled buttons
+Google’s request-verification screen once the control is enabled, including link-style
+Continue controls. Native mouse clicks support trusted-event handlers; if an enabled
+prompt remains visible, DOM retries until it dismisses or navigation starts. Disabled buttons
 remain untouched until enabled; CAPTCHA controls and unrelated website buttons
 remain available for manual interaction. Both handlers run in each browser’s
 preload while the page is still loading. The same search resumes after dismissal,
@@ -118,24 +120,27 @@ instead of starting searches with a cache that could be cleared late. Stop cance
 the wait immediately.
 
 `node scripts/smoke-google-prompts.cjs` exercises late cookie overlays, delayed
-Continue buttons, sequential prompts, a separate consent redirect, independent
+Continue buttons and links, trusted mouse events, late handlers, slow redirects,
+sequential prompts, a separate consent redirect, independent
 browser sessions, and native HTTP/Cache Storage cleanup. It also checks that
 Reject all, unrelated Continue buttons, and CAPTCHA controls are not activated.
 Pass a packaged executable to run against the installed application’s code.
 
-## Keep Alive reading pace
+## Keep Alive scrolling
 
-Keep Alive scrolls forward at approximately 450 words per minute, with a maximum
-scroll speed of 120 pixels per second. Every new page has a minimum 30-second
-dwell before its next internal article link is clicked; longer articles take
-longer. It does not cycle down and back up or restart from the top between actions.
-Reading runs in bounded ten-second chunks that retain progress and resume promptly,
-so Stop, cancellation and the existing watchdog remain responsive. A new document
-or page URL starts a new dwell. Google result-title clicks remain immediate.
+Keep Alive spends forty seconds on each article, scrolling from the top to the
+bottom and back to the top, then clicking an internal article link. The same
+sequence repeats on the next article. Brief holds at both ends let native smooth
+scrolling cover the whole page. Its height is refreshed to include lazy content.
+
+Actions run in bounded ten-second chunks that retain the page clock and resume
+promptly, keeping Stop, cancellation and the watchdog responsive. Each new
+article starts a new forty-second interval. Google result-title clicks remain immediate.
 
 Run `node scripts/smoke-keep-alive-reading.cjs` from a graphical desktop, optionally
-passing a packaged executable. The native check verifies two real page dwells,
-forward scrolling, internal title-link activation and cancellation on the next page.
+passing a packaged executable. The native check verifies two forty-second page
+visits, downward and upward scrolling to both ends, actual internal link clicks,
+and cancellation on the next page.
 
 ## Browser startup
 
@@ -194,7 +199,7 @@ provider list while reserving retained endpoints and excluding just-failed ones.
 
 ### Windows download
 
-[Download DOM v0.5.19 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.19/DOM-v0.5.19-Windows-x64-Setup.exe)
+[Download DOM v0.5.20 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.20/DOM-v0.5.20-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -212,7 +217,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.19-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.20-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -235,14 +240,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.19-linux-x86_64.AppImage
-./DOM-v0.5.19-linux-x86_64.AppImage
+chmod +x DOM-v0.5.20-linux-x86_64.AppImage
+./DOM-v0.5.20-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.19-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.20-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -257,7 +262,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.19-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.20-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -273,7 +278,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.19-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.20-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -297,7 +302,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch or `v0.5.19` tag CI publishes the immutable `v0.5.19-linux.1` release
+Main-branch or `v0.5.20` tag CI publishes the immutable `v0.5.20-linux.1` release
 only after native build, packaged smoke tests and original/optimized fixture
 comparison succeed. Windows and Ubuntu tag workflows publish the same tested
 application source using their workflow tokens.

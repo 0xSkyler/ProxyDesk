@@ -55,11 +55,11 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         });
         const samples = [], started = Date.now();
         let visits, lastReportedPage = 1;
-        while (Date.now() - started < 90_000) {
+        while (Date.now() - started < 115_000) {
             const sample = await withinDeadline(application.evaluate(async () => {
                 const { browser, visits } = global.__domReadingProbe;
                 let document;
-                try { document = await browser.view.webContents.executeJavaScript('({url:location.href,y:window.scrollY})'); }
+                try { document = await browser.view.webContents.executeJavaScript('({url:location.href,y:window.scrollY,max:Math.max(0,document.scrollingElement.scrollHeight-innerHeight)})'); }
                 catch { /* Navigation can replace the sampling frame. */ }
                 return { visits: [...visits], document, failures: browser.keepAliveFailureCount };
             }), 5_000, 'Reading progress');
@@ -67,7 +67,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             if (sample.document) samples.push(sample.document);
             if (visits.length > 1) {
                 const dwell = visits.at(-1).at - visits.at(-2).at;
-                assert.ok(dwell >= 30_000, `Page ${visits.at(-2).page} was left after ${dwell} ms`);
+                assert.ok(dwell >= 40_000, `Page ${visits.at(-2).page} was left after ${dwell} ms`);
                 if (visits.at(-1).page !== lastReportedPage) {
                     console.log(`Page ${visits.at(-2).page} dwell: ${dwell} ms`);
                     lastReportedPage = visits.at(-1).page;
@@ -78,9 +78,14 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         }
         assert.deepEqual(visits.map(v => v.page), [1, 2, 3]);
         for (const page of [1, 2]) {
-            const positions = samples.filter(s => s.url === `https://reading.test/article/${page}`).map(s => s.y);
+            const pageSamples = samples.filter(s => s.url === `https://reading.test/article/${page}`);
+            const positions = pageSamples.map(s => s.y);
             assert.ok(positions.length > 20 && Math.max(...positions) > 50, `Page ${page} did not scroll while reading`);
-            assert.ok(positions.every((y, i) => !i || y >= positions[i - 1] - 1), `Page ${page} scrolled backwards`);
+            assert.ok(positions.some((y, i) => i && y > positions[i - 1] + 1), `Page ${page} did not scroll down`);
+            assert.ok(positions.some((y, i) => i && y < positions[i - 1] - 1), `Page ${page} did not scroll back up`);
+            const bottom = Math.max(...pageSamples.map(s => s.max));
+            assert.ok(Math.max(...positions) >= bottom - 2, `Page ${page} did not reach its bottom`);
+            assert.ok(positions.slice(Math.floor(positions.length / 2)).some(y => y <= 2), `Page ${page} did not return to its top`);
         }
         await wait(2_500);
         await application.evaluate(() => global.__domReadingProbe.manager.setBrowserKeepAlive(801, false));
@@ -97,7 +102,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         assert.equal(stopped.document.reading, false);
         assert.equal(stopped.visits.length, 3);
         console.log(JSON.stringify({ version: metadata.version, dwellMs: visits.slice(1).map((v, i) => v.at - visits[i].at),
-            forwardScroll: true, stopped: true, sampleCount: samples.length }, null, 2));
+            fullPageDownAndUp: true, stopped: true, sampleCount: samples.length }, null, 2));
     } finally {
         if (application) await application.close();
         fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });

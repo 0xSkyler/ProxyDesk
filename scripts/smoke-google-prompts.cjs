@@ -46,7 +46,17 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             const later = (fn, ms) => { const timer = setTimeout(fn, ms); timers.add(timer); return timer; };
             const html = content => '<!doctype html><html><head><link rel="icon" href="data:,"><style>body{font:20px sans-serif}.dialog{position:fixed;inset:0;background:white;z-index:100;padding:40px}button{padding:20px;margin:10px}</style></head><body>' + content;
             const card = id => `<main id="search"><article><cite>appareldiary.com</cite><a href="https://appareldiary.com/article/${id}" onclick="document.cookie='titleClicked=1; path=/';"><h3>${title}</h3></a></article></main>`;
-            const verification = (id, captcha = false) => `<div id="verification" class="dialog"><h1>Verifying your request</h1><p>You'll be able to continue in a few seconds. Don't refresh this page.</p>${captcha ? '<div class="g-recaptcha"></div>' : ''}<button id="continue" disabled onclick="document.cookie='continued=1; path=/';document.getElementById('verification').remove();">Continue</button></div><script>setTimeout(()=>document.getElementById('continue').disabled=false,1000)</script>`;
+            const verification = (id, captcha = false) => `<div id="verification" class="dialog"><h1>Verifying your request</h1><p>You'll be able to continue in a few seconds. Don't refresh this page.</p>${captcha ? '<div class="g-recaptcha" style="width:300px;height:80px">CAPTCHA requires manual interaction</div>' : ''}<button id="continue" disabled onclick="document.cookie='continued=1; path=/';document.getElementById('verification').remove();">Continue</button></div><script>setTimeout(()=>document.getElementById('continue').disabled=false,1000)</script>`;
+            const difficultVerification = mode => {
+                const action = "event.preventDefault();document.cookie='continued=1; path=/';document.cookie='trusted='+Number(event.isTrusted)+'; path=/';document.getElementById('verification').remove();";
+                const button = mode === 'anchor' ? `<a id="continue" href="/continue" aria-disabled="true" style="pointer-events:none" onclick="${action}"><span>Continue</span></a>` :
+                    `<button id="continue" disabled ${mode === 'late-handler' ? '' : `onclick="${mode === 'trusted' ? 'if(!event.isTrusted)return;' : ''}${action}"`}><span>Continue</span></button>`;
+                const content = `<h1>Verifying your request</h1><p>You'll be able to continue in a few seconds. Don't refresh this page.</p>${mode === 'hidden-captcha' ? '<div class="g-recaptcha" hidden></div>' : ''}${button}`;
+                return `<div id="verification" class="dialog">${mode === 'sorry-form' ? `<form action="/sorry/index">${content}</form>` : content}</div><script>
+                    setTimeout(()=>{const b=document.getElementById('continue');b.disabled=false;b.removeAttribute('aria-disabled');b.style.pointerEvents='auto';},1000);
+                    ${mode === 'late-handler' ? `setTimeout(()=>document.getElementById('continue').addEventListener('click',event=>{${action}}),1800);` : ''}
+                    </script>`;
+            };
             const consent = (id, action = "document.getElementById('consent').remove()") => `<div role="dialog" id="consent" class="dialog"><h1>Before you continue to Google</h1><p>We use cookies and data. You can visit g.co/privacytools at any time.</p><button onclick="document.cookie='rejected=1; path=/';document.getElementById('consent').remove()">Reject all</button><button onclick="document.cookie='accepted=1; path=/';${action}">Accept all</button><a href="#">More options</a></div>`;
             async function create(id, mode) {
                 await manager.createBrowser(id, { startPage: 'about:blank', persistSessions: false });
@@ -82,9 +92,10 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                         return new Response(html(consent(id, action)) + '</body></html>', { headers: { 'Content-Type': 'text/html' } });
                     }
                     let content = card(id);
-                    if (mode === 'overlay' || mode === 'fleet') content += consent(id);
+                    if (mode === 'overlay') content += consent(id);
                     if (mode === 'verification' || mode === 'captcha') content += verification(id, mode === 'captcha');
-                    if (mode === 'combined') {
+                    if (['anchor', 'trusted', 'late-handler', 'sorry-form', 'hidden-captcha'].includes(mode)) content += difficultVerification(mode);
+                    if (mode === 'combined' || mode === 'fleet') {
                         // Consent creates a second Google screen in the same document.
                         const next = verification(id).replace(/<script>[\s\S]*?<\/script>/g, '');
                         const action = `document.getElementById('consent').outerHTML=${JSON.stringify(next)};setTimeout(()=>document.getElementById('continue').disabled=false,1000)`;
@@ -116,8 +127,10 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 if (mode !== 'standalone' && (!trace.targetMatch?.loading || trace.targetMatch.parsed || trace.finishedBeforeMatch))
                     throw new Error(`${mode}: waited for parsing/full loading: ${JSON.stringify(trace)}`);
                 if (['overlay', 'combined', 'fleet', 'standalone'].includes(mode) && choices.accepted !== '1') throw new Error(`${mode}: Accept all was not clicked`);
-                if (['verification', 'combined'].includes(mode) && (choices.continued !== '1' || Date.now() - started < 1_000))
+                if (['verification', 'combined', 'fleet', 'anchor', 'trusted', 'late-handler', 'sorry-form', 'hidden-captcha'].includes(mode) && (choices.continued !== '1' || Date.now() - started < 1_000))
                     throw new Error(`${mode}: Continue was not clicked after becoming enabled`);
+                if (['anchor', 'trusted', 'late-handler', 'sorry-form', 'hidden-captcha'].includes(mode) && choices.trusted !== '1')
+                    throw new Error(`${mode}: Continue did not receive a real mouse click`);
                 const evidence = { elapsedMs: Date.now() - started, searches: trace.searches, choices, beforeLoad: Boolean(trace.targetMatch?.loading), resultPage: result.resultPage };
                 await manager.destroyBrowser(id); return evidence;
             }
@@ -125,6 +138,8 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             try {
                 for (const [index, mode] of ['overlay', 'verification', 'combined', 'standalone', 'unrelated'].entries())
                     stats[mode] = await search(601 + index, mode);
+                for (const [index, mode] of ['anchor', 'trusted', 'late-handler', 'sorry-form', 'hidden-captcha'].entries())
+                    stats[mode] = await search(640 + index, mode);
                 const ids = [610, 611, 612, 613];
                 stats.independentBrowsers = await Promise.all(ids.map(id => search(id, 'fleet')));
                 for (const [id, mode, url] of [
@@ -142,15 +157,19 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 const verify = await create(622, 'unrelated');
                 verify.session.protocol.unhandle('https');
                 let continueRequests = 0;
-                verify.session.protocol.handle('https', request => {
-                    if (request.url.includes('/finished')) { continueRequests++; return new Response(html('<h1>Finished</h1>'), { headers: { 'Content-Type': 'text/html' } }); }
+                verify.session.protocol.handle('https', async request => {
+                    if (request.url.includes('/finished')) {
+                        continueRequests++; await pause(1_500);
+                        return new Response(html('<h1>Finished</h1>'), { headers: { 'Content-Type': 'text/html' } });
+                    }
                     const action = "document.cookie='continued=1; path=/';location.href='https://www.google.com/finished'";
                     const body = verification(622).replace("document.cookie='continued=1; path=/';document.getElementById('verification').remove();", action);
                     return new Response(html(body) + '</body></html>', { headers: { 'Content-Type': 'text/html' } });
                 });
                 void verify.view.webContents.loadURL('https://www.google.com/verify').catch(() => {});
-                for (let count = 0; count < 40 && !continueRequests; count++) await pause(100);
+                for (let count = 0; count < 50 && !verify.view.webContents.getURL().endsWith('/finished'); count++) await pause(100);
                 if (continueRequests !== 1) throw new Error('Standalone enabled Continue was not clicked');
+                if (!verify.view.webContents.getURL().endsWith('/finished')) throw new Error('Continue redirect did not finish');
                 stats.standaloneContinue = { requests: continueRequests };
                 await manager.destroyBrowser(622);
 
