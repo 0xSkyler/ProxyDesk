@@ -266,7 +266,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const rotationStates = new Map(browserIds.map(id => [id, this.browserManager.getProxyRotationState(id)]));
         const retained = cycleNumber > 1 ? browserIds.filter(id => {
             const health = rotationStates.get(id);
-            return health.proxy && health.googleReached && !health.failed;
+            return health.proxy && health.targetOpened && !health.captchaSeen && !health.failed;
         }).map(browserId => ({ browserId, proxy: rotationStates.get(browserId).proxy, retained: true })) : [];
         const retainedIds = new Set(retained.map(assignment => assignment.browserId));
         const replacementIds = browserIds.filter(id => !retainedIds.has(id));
@@ -521,9 +521,9 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             }
             this.emit('seoResult', { cycleNumber, result });
             if (result.status === 'paused') {
-                // Keep the same browser, proxy, cookies, and Google session. We do not
-                // solve or bypass the challenge; we simply wait for normal results to
-                // return, then resume the saved keyword/website measurement.
+                // Leave the current challenge available for manual recovery.
+                // The CAPTCHA flag remains sticky: this proxy will be replaced
+                // at the next cycle even if normal results return meanwhile.
                 const recovered = await this.browserManager.waitForGoogleRecovery(browserId, observationIntervalMs);
                 if (!recovered) {
                     await cancellableDelay(1_000, signal);

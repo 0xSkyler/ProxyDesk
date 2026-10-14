@@ -1,4 +1,4 @@
-# DOM v0.5.20
+# DOM v0.5.21
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -168,19 +168,29 @@ them simultaneously. Each subsequent cycle moves every browser to the next keywo
 and wraps at the end of the list. For example, three browsers with `first, second`
 run `first, second, first`, then `second, first, second`.
 
-A proxy that reached Google and had no connection failure during the outgoing cycle
-stays assigned to its browser. Only failed or unproven connections receive fresh
-proxies. Retained endpoints cannot be assigned to another browser, including under
-another proxy protocol, and the just-failed endpoints are excluded from replacements.
-Google consent/challenge responses prove reachability; a challenge is not classified
-as a dead transport connection. No separate Google validation request is added.
+A proxy stays assigned only if its browser opened the configured target page with a
+successful main-document response and had no Google CAPTCHA, connection failure or
+renderer failure during the outgoing cycle. Reaching Google, detecting a result,
+and attempting a click are insufficient. Target success is recorded at navigation
+commit without waiting for Ready or full-page loading.
+
+A Google CAPTCHA redirect or inline challenge disqualifies that proxy for the rest
+of the cycle, even if it recovers and later opens the target. The current session
+can still recover manually; replacement happens at the next cycle. Proxies that
+never open the target or fail later during Keep Alive are also replaced. Retained
+endpoints remain reserved across protocols, and all just-disqualified endpoints are
+excluded from replacement candidates. Each new cycle requires fresh target-opening
+proof. Health is tracked from browser navigation and failure events throughout the
+cycle, without separate Google validation requests.
 
 All selected browsers still clear their caches before each cycle and start a fresh
 search for their next keyword. Healthy browsers keep their native proxy routing and
 do not wait for the replacement API. An all-healthy cycle skips the API request.
 The status bar shows **Kept** and **New** counts. `node scripts/smoke-proxy-rotation.cjs`
-checks three native cycles, a failed slot, unchanged healthy routing/connections,
-keyword rotation, all-healthy API skipping and per-cycle cache cleanup.
+checks six browsers across three native cycles: healthy retention, CAPTCHA recovery
+that still requires replacement, CAPTCHA redirects, Google without a target opening,
+initial connection failure, failure after target opening, keyword rotation, all-qualified
+API skipping and per-cycle cache cleanup.
 
 ## Proxy sources
 
@@ -199,7 +209,7 @@ provider list while reserving retained endpoints and excluding just-failed ones.
 
 ### Windows download
 
-[Download DOM v0.5.20 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.20/DOM-v0.5.20-Windows-x64-Setup.exe)
+[Download DOM v0.5.21 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.21/DOM-v0.5.21-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -217,7 +227,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.20-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.21-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -240,14 +250,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.20-linux-x86_64.AppImage
-./DOM-v0.5.20-linux-x86_64.AppImage
+chmod +x DOM-v0.5.21-linux-x86_64.AppImage
+./DOM-v0.5.21-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.20-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.21-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -262,7 +272,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.20-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.21-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -278,7 +288,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.20-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.21-linux.1/deploy/install-ubuntu.sh -o /tmp/dom-install.sh && bash /tmp/dom-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -302,7 +312,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-Main-branch or `v0.5.20` tag CI publishes the immutable `v0.5.20-linux.1` release
+Main-branch or `v0.5.21` tag CI publishes the immutable `v0.5.21-linux.1` release
 only after native build, packaged smoke tests and original/optimized fixture
 comparison succeed. Windows and Ubuntu tag workflows publish the same tested
 application source using their workflow tokens.

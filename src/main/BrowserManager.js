@@ -19,13 +19,6 @@ const seo_1 = require("../shared/seo");
 const { inspectGooglePrompt, recognizeGoogleResults, installGoogleResultObserver } = require('../preload/google-results');
 const Logger_1 = require("./Logger");
 const { withTimeout, waitForPreparation, preparationCancelled } = require("./runtime");
-/** Cap on automatic proxy swaps triggered by hitting Google's CAPTCHA page
- * in a row, before giving up and leaving it for a manual "Change Proxy"
- * click — without this, a proxy pool that's mostly Google-flagged (a real
- * possibility with free/public lists) could otherwise have a browser
- * silently burning through proxies forever. Resets on the next explicit
- * navigate() (fresh intent) or once a page loads that ISN'T the block page. */
-const MAX_GOOGLE_BLOCK_RETRIES = 3;
 /**
  * If `url` is Google's "unusual traffic" / CAPTCHA interstitial
  * (`google.<tld>/sorry/...`), returns the page it was guarding — pulled
@@ -200,9 +193,8 @@ class BrowserManager extends node_events_1.EventEmitter {
             partition,
             session: ses,
             state,
-            proxyHealth: { googleReached: false, failed: false },
+            proxyHealth: { googleReached: false, targetOpened: false, captchaSeen: false, failed: false },
             restartAttempts: 0,
-            googleBlockRetries: 0,
             keepAliveEnabled: false,
             keepAliveHops: 0,
             keepAliveNextAt: Date.now() + this.keepAliveIntervalMs,
@@ -317,6 +309,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             if (url.searchParams.get('q') !== config.query || (url.searchParams.get('start') || '0') !== config.start) return;
             if (config.token != null && !this.isMeasurementSessionCurrent(id, config.token)) return;
             managed.googleState = payload.state;
+            if (payload.state?.blocked) this.recordGoogleCaptcha(managed);
             if (payload.state?.observedResults) {
                 if (managed.state.proxy) managed.proxyHealth.googleReached = true;
                 const activity = payload.state.match ? 'opening-target' : 'scanning-results';
@@ -359,21 +352,32 @@ class BrowserManager extends node_events_1.EventEmitter {
                 if (managed.state.proxy && httpResponseCode >= 100 && httpResponseCode < 600 &&
                     /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(parsed.hostname))
                     managed.proxyHealth.googleReached = true;
+                const config = managed.googleConfig;
+                // A visible result or an attempted click is insufficient: the
+                // target document must actually commit a successful response.
+                // This does not wait for Ready or full-page loading.
+                if (managed.state.proxy && httpResponseCode >= 200 && httpResponseCode < 400 && config &&
+                    !isGoogleSearchResultsUrl(url) &&
+                    (config.token == null || this.isMeasurementSessionCurrent(id, config.token)) &&
+                    (0, seo_1.hostMatchesTarget)(url, config.target)) managed.proxyHealth.targetOpened = true;
             } catch { /* Non-web navigation is not proxy health evidence. */ }
             this.updateState(managed, { url });
-            this.maybeHandleGoogleBlock(managed, url, options);
+            this.maybeHandleGoogleBlock(managed, url);
             this.requestGoogleState(managed, true);
         });
         wc.on('did-navigate-in-page', (_e, url) => {
             this.updateState(managed, { url });
+            this.maybeHandleGoogleBlock(managed, url);
             this.requestGoogleState(managed, true);
         });
         wc.on('page-title-updated', (_e, title) => this.updateState(managed, { title }));
         wc.on('page-favicon-updated', (_e, favicons) => this.updateState(managed, { faviconUrl: favicons[0] }));
         wc.on('did-fail-load', (_e, errorCode, errorDescription, _url, isMainFrame) => {
-            if (!isMainFrame || errorCode === -3)
+            if (errorCode === -3)
                 return; // -3 = ERR_ABORTED (e.g. user navigated away mid-load)
-            if (managed.state.proxy && /^https?:\/\//i.test(_url)) managed.proxyHealth.failed = true;
+            if (managed.state.proxy && /^https?:\/\//i.test(_url) &&
+                (isMainFrame || /ERR_PROXY_|ERR_TUNNEL_CONNECTION_FAILED/.test(errorDescription))) managed.proxyHealth.failed = true;
+            if (!isMainFrame) return;
             this.updateState(managed, {
                 loading: false,
                 connectionStatus: managed.state.proxy ? 'proxy-failed' : 'no-proxy',
@@ -382,6 +386,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             Logger_1.logger.warn('browser', `Browser ${id} failed to load: ${errorDescription} (${errorCode})`);
         });
         wc.on('render-process-gone', (_e, details) => {
+            if (managed.state.proxy) managed.proxyHealth.failed = true;
             Logger_1.logger.error('browser', `Browser ${id} renderer process gone: ${details.reason}`);
             this.updateState(managed, { connectionStatus: 'crashed', crashCount: managed.state.crashCount + 1 });
             void this.handleCrash(managed, options);
@@ -429,38 +434,17 @@ class BrowserManager extends node_events_1.EventEmitter {
             Logger_1.logger.warn('browser', `Browser ${managed.id} restart attempt failed: ${err.message}`);
         }
     }
-    /**
-     * Called on every navigation. If the URL just landed on is Google's
-     * CAPTCHA interstitial, records it as a failure on this browser (so the
-     * UI shows *why* nothing loaded, instead of it just looking stuck) and,
-     * while still under MAX_GOOGLE_BLOCK_RETRIES, notifies the caller so it
-     * can swap in a different proxy and retry the real page — see
-     * BrowserManagerOptions.onGoogleBlocked. A normal page load (anything
-     * that isn't the interstitial) resets the counter, so retries are
-     * counted per unbroken streak of blocks, not cumulatively for the
-     * browser's whole lifetime.
-     */
-    maybeHandleGoogleBlock(managed, url, options) {
-        const continueUrl = extractGoogleBlockContinueUrl(url);
-        if (!continueUrl) {
-            managed.googleBlockRetries = 0;
-            return;
-        }
-        if (managed.googleBlockRetries >= MAX_GOOGLE_BLOCK_RETRIES) {
-            this.updateState(managed, {
-                connectionStatus: 'proxy-failed',
-                errorMessage: `Blocked by Google (CAPTCHA) — gave up after ${MAX_GOOGLE_BLOCK_RETRIES} automatic proxy retries. Use "Change Proxy" to try another manually.`
-            });
-            Logger_1.logger.warn('browser', `Browser ${managed.id}: exhausted ${MAX_GOOGLE_BLOCK_RETRIES} automatic proxy retries after repeated Google CAPTCHA blocks.`);
-            return;
-        }
+    // Both a CAPTCHA redirect and an inline search-page challenge disqualify
+    // this proxy for the whole cycle, even if it subsequently recovers.
+    recordGoogleCaptcha(managed) {
+        if (managed.state.proxy) managed.proxyHealth.captchaSeen = true;
         this.updateState(managed, {
             connectionStatus: 'proxy-failed',
-            errorMessage: 'Blocked by Google (CAPTCHA) on this proxy — retrying automatically with a different one…'
+            errorMessage: 'Google CAPTCHA detected. This proxy will be replaced in the next cycle.'
         });
-        managed.googleBlockRetries += 1;
-        Logger_1.logger.warn('browser', `Browser ${managed.id}: hit Google's CAPTCHA page (attempt ${managed.googleBlockRetries}/${MAX_GOOGLE_BLOCK_RETRIES}) — requesting a proxy swap.`);
-        options.onGoogleBlocked?.(managed.id, continueUrl);
+    }
+    maybeHandleGoogleBlock(managed, url) {
+        if (extractGoogleBlockContinueUrl(url)) this.recordGoogleCaptcha(managed);
     }
     updateState(managed, patch) {
         if (managed.disposed || this.disposed) return;
@@ -484,7 +468,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         return { proxy: managed.state.proxy, ...managed.proxyHealth };
     }
     beginProxyCycle(id) {
-        this.get(id).proxyHealth = { googleReached: false, failed: false };
+        this.get(id).proxyHealth = { googleReached: false, targetOpened: false, captchaSeen: false, failed: false };
     }
     async prepareCycleDocument(id, signal) {
         // Release the outgoing page and any navigation that was still
@@ -511,7 +495,6 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     async navigate(id, url) {
         const managed = this.get(id);
-        managed.googleBlockRetries = 0;
         const normalized = normalizeUrl(url);
         await managed.view.webContents.loadURL(normalized);
     }
@@ -619,7 +602,7 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     async assignProxyOwned(id, proxy, managed) {
         if (this.disposed || managed.disposed || this.browsers.get(id) !== managed) return;
-        managed.proxyHealth = { googleReached: false, failed: false };
+        managed.proxyHealth = { googleReached: false, targetOpened: false, captchaSeen: false, failed: false };
         this.cancelKeepAliveAction(managed);
         // Proxy changes define a new browsing generation. Cancel any old Keep
         // Alive worker here as a final safety net even if the orchestration layer

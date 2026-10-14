@@ -41,7 +41,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             const manager = new BrowserManager(), proxies = new ProxyManager();
             const window = new BrowserWindow({ width: 1000, height: 740, show: true });
             manager.attachWindow(window);
-            const ids = [901, 902, 903], traces = new Map();
+            const ids = [901, 902, 903, 904, 905, 906], traces = new Map();
             const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
             async function until(predicate, label) {
                 const deadline = Date.now() + 12_000;
@@ -53,14 +53,14 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 apiCalls++;
                 if (apiCalls > 2) { response.writeHead(503); response.end('No further API request is needed'); return; }
                 response.writeHead(200, { 'Content-Type': 'text/plain' });
-                response.end([1, 2, 3, 4].map(n => `http://127.0.0.${n}:8111`).join('\n'));
+                response.end(Array.from({ length: 11 }, (_, i) => i + 1).map(n => `http://127.0.0.${n}:8111`).join('\n'));
             });
             await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
             const automation = new SeoAutomationManager(proxies, manager, async () => ids);
             try {
                 for (const id of ids) {
                     await manager.createBrowser(id, { startPage: 'about:blank', persistSessions: false });
-                    const managed = manager.get(id), trace = { keywords: [], targets: 0, routingChanges: 0, connectionResets: 0, cacheClears: 0, preloadErrors: [], cacheIpc: [] };
+                    const managed = manager.get(id), trace = { keywords: [], targets: 0, routingChanges: 0, connectionResets: 0, cacheClears: 0, targetBeforeReady: false, recovered: false, failTarget: false, preloadErrors: [], cacheIpc: [] };
                     managed.view.webContents.on('preload-error', (_event, _file, error) => trace.preloadErrors.push(error.message));
                     managed.view.webContents.on('ipc-message', (event, channel, payload) => {
                         if (!['dom:google-preload-ready', 'dom:renderer-cache-cleared'].includes(channel)) return;
@@ -76,54 +76,91 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                     managed.session.setProxy = options => { trace.routingChanges++; return setProxy(options); };
                     managed.session.closeAllConnections = () => { trace.connectionResets++; return close(); };
                     managed.session.clearCache = () => { trace.cacheClears++; return clear(); };
+                    managed.view.webContents.on('did-navigate', (_event, url) => {
+                        if (url.startsWith('https://appareldiary.com/') && manager.getProxyRotationState(id).targetOpened)
+                            trace.targetBeforeReady ||= managed.view.webContents.isLoading();
+                    });
                     managed.session.protocol.handle('https', request => {
                         const url = new URL(request.url);
                         if (url.pathname === '/favicon.ico') return new Response('', { status: 204 });
                         if (url.hostname === 'www.google.com') {
+                            if (url.pathname === '/sorry/index') return new Response('<!doctype html><html><body><form id="captcha-form">Google CAPTCHA</form></body></html>', { status: 429, headers: { 'Content-Type': 'text/html' } });
                             trace.keywords.push(url.searchParams.get('q'));
                             if (managed.state.proxy?.host === '127.0.0.3') return Response.error();
+                            const endpoint = managed.state.proxy?.host;
+                            if (endpoint === '127.0.0.2' && !trace.recovered)
+                                return new Response('<!doctype html><html><body><form id="captcha-form" action="/sorry/"><h1>Google CAPTCHA</h1></form></body></html>', { headers: { 'Content-Type': 'text/html' } });
+                            if (endpoint === '127.0.0.4')
+                                return new Response('<!doctype html><html><body><main id="search"><article><a href="https://other.test/article"><h3>Different publisher article</h3></a></article></main></body></html>', { headers: { 'Content-Type': 'text/html' } });
+                            if (endpoint === '127.0.0.6') return Response.redirect('https://www.google.com/sorry/index?continue=' + encodeURIComponent(request.url));
                             const article = `https://appareldiary.com/article/${id}/${trace.keywords.length}`;
                             return new Response(`<!doctype html><html><head><link rel="icon" href="data:,"></head><body><main id="search"><article><cite>appareldiary.com</cite><a href="${article}"><h3>Article for ${url.searchParams.get('q')}</h3></a></article></main></body></html>`, { headers: { 'Content-Type': 'text/html' } });
                         }
+                        if (managed.state.proxy?.host === '127.0.0.5' && trace.failTarget) return Response.error();
                         trace.targets++;
                         return new Response('<!doctype html><html><head><link rel="icon" href="data:,"></head><body><article><h1>Target article</h1><p>Reading content.</p></article></body></html>', { headers: { 'Content-Type': 'text/html' } });
                     });
                 }
-                await automation.start({ query: 'first,second,third', targetWebsite: 'appareldiary.com', browserCount: 3,
+                await automation.start({ query: 'first,second,third', targetWebsite: 'appareldiary.com', browserCount: ids.length,
                     intervalSec: 600, maxPages: 1, proxySource: 'all-working', proxyApiUrl: `http://127.0.0.1:${server.address().port}/proxies` });
                 await until(() => automation.getState().cycleNumber === 1 && !automation.getState().cycleInProgress &&
-                    traces.get(901).targets >= 1 && traces.get(902).targets >= 1 && manager.get(903).state.connectionStatus === 'proxy-failed', 'First cycle');
-                const first = ids.map(id => ({ id, proxy: manager.get(id).state.proxy.host,
-                    routingChanges: traces.get(id).routingChanges, connectionResets: traces.get(id).connectionResets }));
+                    manager.getProxyRotationState(901).targetOpened && manager.getProxyRotationState(902).captchaSeen &&
+                    manager.getProxyRotationState(903).failed && manager.getProxyRotationState(904).googleReached &&
+                    manager.getProxyRotationState(905).targetOpened && manager.getProxyRotationState(906).captchaSeen, 'First cycle');
                 if (apiCalls !== 1) throw new Error('First cycle must fetch one proxy pool');
+
+                // Simulate manual recovery in the same CAPTCHA browser. A real
+                // result click then opens the target, but cannot erase its flag.
+                traces.get(902).recovered = true;
+                await manager.get(902).view.webContents.loadURL('https://www.google.com/search?q=second&num=10&hl=en');
+                await until(() => manager.getProxyRotationState(902).targetOpened, 'CAPTCHA recovery target click');
+                if (!manager.getProxyRotationState(902).captchaSeen) throw new Error('Manual recovery erased the CAPTCHA flag');
+
+                // A later target navigation failure must invalidate a proxy
+                // that opened its first article successfully.
+                traces.get(905).failTarget = true;
+                void manager.get(905).view.webContents.loadURL('https://appareldiary.com/article/905/failed').catch(() => {});
+                await until(() => manager.getProxyRotationState(905).failed, 'Failure after target opened');
+                const first = ids.map(id => ({ id, ...manager.getProxyRotationState(id), proxy: manager.get(id).state.proxy.host,
+                    routingChanges: traces.get(id).routingChanges, connectionResets: traces.get(id).connectionResets }));
+                if (first.find(row => row.id === 904).targetOpened) throw new Error('Google-only browsing qualified as target success');
+                if (!traces.get(901).targetBeforeReady) throw new Error('Target success waited for Ready');
+                const targetsBeforeSecond = new Map(ids.map(id => [id, traces.get(id).targets]));
                 await automation.runNow();
-                await until(() => !automation.getState().cycleInProgress && ids.every(id => traces.get(id).targets >= (id === 903 ? 1 : 2)), 'Second cycle');
-                for (const original of first.slice(0, 2)) {
-                    const current = manager.get(original.id), trace = traces.get(original.id);
-                    if (current.state.proxy.host !== original.proxy) throw new Error(`Healthy Browser ${original.id} changed proxy from ${original.proxy} to ${current.state.proxy.host}`);
-                    if (trace.routingChanges !== original.routingChanges || trace.connectionResets !== original.connectionResets)
-                        throw new Error(`Healthy Browser ${original.id} reset its existing routing/connections`);
-                    const nativeRoute = await current.session.resolveProxy('https://www.google.com');
-                    if (!nativeRoute.includes(original.proxy + ':8111')) throw new Error('Native route did not retain the healthy proxy: ' + nativeRoute);
+                await until(() => !automation.getState().cycleInProgress && ids.every(id => manager.getProxyRotationState(id).targetOpened &&
+                    traces.get(id).targets > targetsBeforeSecond.get(id)), 'Second cycle');
+                const healthy = first[0], trace = traces.get(901), current = manager.get(901);
+                if (current.state.proxy.host !== healthy.proxy || trace.routingChanges !== healthy.routingChanges ||
+                    trace.connectionResets !== healthy.connectionResets) throw new Error('Qualified browser changed its routing or connections');
+                const nativeRoute = await current.session.resolveProxy('https://www.google.com');
+                if (!nativeRoute.includes(healthy.proxy + ':8111')) throw new Error('Native route did not retain the qualified proxy: ' + nativeRoute);
+                for (const [index, id] of ids.slice(1).entries()) {
+                    const expected = '127.0.0.' + (index + 7);
+                    if (manager.get(id).state.proxy.host !== expected) throw new Error(`Browser ${id} did not receive replacement ${expected}`);
+                    if (manager.getProxyRotationState(id).captchaSeen || manager.getProxyRotationState(id).failed)
+                        throw new Error('Replacement inherited an outgoing failure flag');
                 }
-                if (manager.get(903).state.proxy.host !== '127.0.0.4') throw new Error('Failed Browser 903 did not receive the fresh unreserved proxy');
-                if (apiCalls !== 2) throw new Error('Second cycle must fetch only for its failed slot');
+                if (apiCalls !== 2) throw new Error('Second cycle must fetch one pool for its disqualified slots');
+                const expectedKeywords = cycle => ids.map((_, index) => ['first', 'second', 'third'][(index + cycle - 1) % 3]).join(',');
                 const second = ids.map(id => ({ id, proxy: manager.get(id).state.proxy.host, keyword: traces.get(id).keywords.at(-1) }));
-                if (second.map(r => r.keyword).join(',') !== 'second,third,first') throw new Error('Second-cycle keywords did not advance: ' + JSON.stringify(second));
+                if (second.map(r => r.keyword).join(',') !== expectedKeywords(2)) throw new Error('Second-cycle keywords did not advance: ' + JSON.stringify(second));
                 const secondStatus = automation.getState();
-                if (secondStatus.retainedBrowsers !== 2 || secondStatus.replacedBrowsers !== 1 || secondStatus.assignedBrowsers !== 3)
+                if (secondStatus.retainedBrowsers !== 1 || secondStatus.replacedBrowsers !== 5 || secondStatus.assignedBrowsers !== ids.length)
                     throw new Error('Second-cycle retention counters are incorrect');
+                const targetsBeforeThird = new Map(ids.map(id => [id, traces.get(id).targets]));
                 await automation.runNow();
-                await until(() => !automation.getState().cycleInProgress && ids.every(id => traces.get(id).targets >= (id === 903 ? 2 : 3)), 'Third cycle');
-                if (apiCalls !== 2) throw new Error('All-healthy cycle called the unavailable API');
+                await until(() => !automation.getState().cycleInProgress && ids.every(id => manager.getProxyRotationState(id).targetOpened &&
+                    traces.get(id).targets > targetsBeforeThird.get(id)), 'Third cycle');
+                if (apiCalls !== 2) throw new Error('All-qualified cycle called the unavailable API');
                 const third = ids.map(id => ({ id, proxy: manager.get(id).state.proxy.host, keyword: traces.get(id).keywords.at(-1), cacheClears: traces.get(id).cacheClears }));
-                if (third.map(r => r.keyword).join(',') !== 'third,first,second') throw new Error('Third-cycle keywords did not advance');
+                if (third.map(r => r.keyword).join(',') !== expectedKeywords(3)) throw new Error('Third-cycle keywords did not advance');
                 if (third.some((row, index) => row.proxy !== second[index].proxy || row.cacheClears !== 3))
-                    throw new Error('All-healthy cycle changed routing or skipped per-cycle cache cleanup');
-                if (automation.getState().retainedBrowsers !== 3 || automation.getState().replacedBrowsers !== 0)
-                    throw new Error('All-healthy retention counters are incorrect');
+                    throw new Error('All-qualified cycle changed routing or skipped per-cycle cache cleanup');
+                if (automation.getState().retainedBrowsers !== ids.length || automation.getState().replacedBrowsers !== 0)
+                    throw new Error('All-qualified retention counters are incorrect');
                 return { apiCalls, first, second, third, healthyRoutingUnchanged: true, allHealthyApiSkipped: true,
-                    cacheClearedEveryCycle: true, exactKeywordRotation: true };
+                    captchaRecoveredButReplaced: true, captchaRedirectReplaced: true, googleOnlyReplaced: true,
+                    failureAfterTargetReplaced: true, targetOpenedBeforeReady: true, cacheClearedEveryCycle: true, exactKeywordRotation: true };
             } finally {
                 automation.stop(); await manager.destroyAll(); window.destroy();
                 server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

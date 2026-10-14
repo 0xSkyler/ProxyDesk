@@ -1,9 +1,9 @@
-name: DOM v0.5.20 Linux build and regression
+name: DOM v0.5.21 Linux build and regression
 
 on:
   push:
     branches: [main]
-    tags: ['v0.5.20']
+    tags: ['v0.5.21']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -64,7 +64,7 @@ jobs:
         run: xvfb-run -a node scripts/smoke-keep-alive-reading.cjs release-linux/linux-unpacked/dom
       - name: Verify AppImage startup and clean exit
         run: |
-          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.20-linux-x86_64.AppImage
+          xvfb-run -a node scripts/smoke-runtime.cjs release-linux/DOM-v0.5.21-linux-x86_64.AppImage
           node scripts/smoke-appimage.cjs
       - name: Verify installed production sandbox
         run: |
@@ -85,7 +85,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: DOM-v0.5.20-Ubuntu-x64
+          name: DOM-v0.5.21-Ubuntu-x64
           path: |
             release-linux/*.AppImage
             release-linux/*.tar.gz
@@ -118,12 +118,12 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.20-Ubuntu-x64
+          name: DOM-v0.5.21-Ubuntu-x64
           path: .measurements/download
       - name: Prepare packaged runtime and hash-verified reference (benchmark only)
         run: |
           mkdir -p .measurements/runtime
-          tar -xzf .measurements/download/DOM-v0.5.20-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
+          tar -xzf .measurements/download/DOM-v0.5.21-linux-x64.tar.gz -C .measurements/runtime --strip-components=1
           npm run recover
           node scripts/compare-reference.cjs
       - name: Measure original v0.5.4
@@ -158,7 +158,7 @@ jobs:
           retention-days: 30
 
   publish-linux:
-    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/v0.5.20')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
+    if: always() && ((github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.verified_run_id != '') || (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/v0.5.21')) || (github.event_name == 'workflow_dispatch' && inputs.publish_release)) && needs.build-linux.result == 'success' && needs.compare-runtime.result == 'success'))
     needs: [build-linux, compare-runtime]
     runs-on: ubuntu-24.04
     permissions:
@@ -202,7 +202,7 @@ jobs:
           ref: ${{ steps.verified.outputs.source_sha }}
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.20-Ubuntu-x64
+          name: DOM-v0.5.21-Ubuntu-x64
           path: release-linux
           run-id: ${{ steps.verified.outputs.run_id }}
           github-token: ${{ github.token }}
@@ -225,11 +225,11 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/dom-linux-release-notes.md <<'NOTES'
-          DOM 0.5.20 clicks enabled Google Continue controls with native mouse events, including link-style controls and verification forms. The handler retries while the enabled prompt remains present, waits for disabled controls, and resumes the same search without waiting for Ready. Native navigation-start tracking prevents a second click during a slow Continue redirect. Accept all uses the same per-browser handler.
+          DOM 0.5.21 retains a proxy only when its browser opened the configured target through a successful main-document response and had no CAPTCHA, connection failure or renderer failure during the outgoing cycle. Reaching Google, seeing a matching result and attempting a click do not qualify by themselves. Target success is recorded at navigation commit without waiting for Ready.
 
-          Keep Alive now spends forty seconds scrolling each article from top to bottom and back to top, then clicks an actual internal article link and repeats on the next page. Short holds at both ends cover the full page; page height is refreshed for lazy content. Ten-second chunks preserve progress while keeping Stop and rotation responsive.
+          Google CAPTCHA redirects and inline search-page challenges permanently disqualify that proxy for the rest of the current cycle. Manual recovery and a later target opening cannot erase the flag. The proxy stays available until the next rotation, when it is dropped and a fresh unreserved endpoint is assigned. Recently disqualified endpoints cannot be reissued as that cycle’s replacements.
 
-          Healthy proxy retention, failed-proxy replacement, next-keyword rotation, per-cycle cache cleanup and actual Google result-title clicks remain in place. Validation includes installed native Continue/consent/cache checks, two forty-second article visits with full-page scrolling and cancellation, selective proxy rotation, 76 Google layouts, 23 opening scenarios and 50 unfinished-load browsers. SHA-256 checksums are included.
+          Each retained browser keeps its routing, clears its cache and moves to the next keyword. All-qualified cycles skip fetching. Google Accept all/Continue handling, immediate actual result-title clicks and forty-second full-page Keep Alive scrolling remain in place. Installed native validation exercises six browsers across three cycles: healthy retention, inline CAPTCHA followed by recovery, CAPTCHA redirects, Google without a target opening, initial connection failure and failure after the target opened. SHA-256 checksums are included.
           NOTES
           TAG="$(node -p 'require("./package.json").linuxRelease')"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -247,4 +247,4 @@ jobs:
             test "$(git rev-parse "$TAG^{commit}")" = "$VERIFIED_SOURCE_SHA"
             target_args=(--verify-tag)
           fi
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.20 for Ubuntu 24.04" --notes-file /tmp/dom-linux-release-notes.md
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json "${target_args[@]}" --latest=false --title "DOM v0.5.21 for Ubuntu 24.04" --notes-file /tmp/dom-linux-release-notes.md

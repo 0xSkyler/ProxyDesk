@@ -1,4 +1,4 @@
-name: DOM v0.5.20 Windows build and release
+name: DOM v0.5.21 Windows build and release
 
 on:
   pull_request:
@@ -40,8 +40,8 @@ jobs:
       - name: Install into a clean directory
         shell: pwsh
         run: |
-          $installer = Resolve-Path 'release-windows/DOM-v0.5.20-Windows-x64-Setup.exe'
-          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.20-installed'
+          $installer = Resolve-Path 'release-windows/DOM-v0.5.21-Windows-x64-Setup.exe'
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'DOM-v0.5.21-installed'
           $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$installDirectory" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)" }
           $installedExecutable = Join-Path $installDirectory 'DOM.exe'
@@ -65,15 +65,15 @@ jobs:
       - name: Create SHA-256 checksum
         shell: pwsh
         run: |
-          $installer = Get-Item 'release-windows/DOM-v0.5.20-Windows-x64-Setup.exe'
+          $installer = Get-Item 'release-windows/DOM-v0.5.21-Windows-x64-Setup.exe'
           $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
-          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.20-Windows-x64-SHA256SUMS.txt' -Encoding ascii
+          "$hash  $($installer.Name)" | Set-Content 'release-windows/DOM-v0.5.21-Windows-x64-SHA256SUMS.txt' -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
-          name: DOM-v0.5.20-Windows-x64
+          name: DOM-v0.5.21-Windows-x64
           path: |
-            release-windows/DOM-v0.5.20-Windows-x64-Setup.exe
-            release-windows/DOM-v0.5.20-Windows-x64-SHA256SUMS.txt
+            release-windows/DOM-v0.5.21-Windows-x64-Setup.exe
+            release-windows/DOM-v0.5.21-Windows-x64-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -87,7 +87,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: DOM-v0.5.20-Windows-x64
+          name: DOM-v0.5.21-Windows-x64
           path: release-assets
       - name: Publish verified Windows release
         env:
@@ -95,11 +95,11 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/dom-windows-release-notes.md <<'NOTES'
-          DOM 0.5.20 clicks enabled Google Continue controls with native mouse events, including link-style controls and verification forms. The handler retries while the enabled prompt remains present, waits for disabled controls, and resumes the same search without waiting for Ready. Native navigation-start tracking prevents a second click during a slow Continue redirect. Accept all uses the same per-browser handler.
+          DOM 0.5.21 retains a proxy only when its browser opened the configured target through a successful main-document response and had no CAPTCHA, connection failure or renderer failure during the outgoing cycle. Reaching Google, seeing a matching result and attempting a click do not qualify by themselves. Target success is recorded at navigation commit without waiting for Ready.
 
-          Keep Alive now spends forty seconds scrolling each article from top to bottom and back to top, then clicks an actual internal article link and repeats on the next page. Short holds at both ends cover the full page; page height is refreshed for lazy content. Ten-second chunks preserve progress while keeping Stop and rotation responsive.
+          Google CAPTCHA redirects and inline search-page challenges permanently disqualify that proxy for the rest of the current cycle. Manual recovery and a later target opening cannot erase the flag. The proxy stays available until the next rotation, when it is dropped and a fresh unreserved endpoint is assigned. Recently disqualified endpoints cannot be reissued as that cycle’s replacements.
 
-          Healthy proxy retention, failed-proxy replacement, next-keyword rotation, per-cycle cache cleanup and actual Google result-title clicks remain in place. Validation includes installed native Continue/consent/cache checks, two forty-second article visits with full-page scrolling and cancellation, selective proxy rotation, 76 Google layouts, 23 opening scenarios and 50 unfinished-load browsers. SHA-256 checksums are included.
+          Each retained browser keeps its routing, clears its cache and moves to the next keyword. All-qualified cycles skip fetching. Google Accept all/Continue handling, immediate actual result-title clicks and forty-second full-page Keep Alive scrolling remain in place. Installed native validation exercises six browsers across three cycles: healthy retention, inline CAPTCHA followed by recovery, CAPTCHA redirects, Google without a target opening, initial connection failure and failure after the target opened. SHA-256 checksums are included.
           NOTES
           TAG="$(node -p 'require("./package.json").windowsRelease')"
           test "$GITHUB_REF_NAME" = "$TAG"
@@ -107,5 +107,5 @@ jobs:
             echo "$TAG is already published; its artifacts will not be overwritten."
             exit 0
           else
-            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.20 for Windows" --notes-file /tmp/dom-windows-release-notes.md
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "DOM v0.5.21 for Windows" --notes-file /tmp/dom-windows-release-notes.md
           fi
