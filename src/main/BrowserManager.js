@@ -93,7 +93,9 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.loginHandler = (event, webContents, _details, authInfo, callback) => {
             if (!authInfo.isProxy)
                 return; // let page-level basic-auth challenges use Electron's default handling
-            const managed = Array.from(this.browsers.values()).find((m) => m.view.webContents.id === webContents.id);
+            const managed = Array.from(this.browsers.values()).find((m) =>
+                m.view.webContents.id === webContents.id ||
+                Array.from(m.popupWindows).some((popup) => popup.webContents?.id === webContents.id));
             const proxy = managed?.state.proxy;
             if (proxy?.username) {
                 event.preventDefault();
@@ -169,7 +171,8 @@ class BrowserManager extends node_events_1.EventEmitter {
                 contextIsolation: true,
                 sandbox: true,
                 nodeIntegration: false,
-                webSecurity: true
+                webSecurity: true,
+                javascript: true
             }
         });
         const state = {
@@ -194,6 +197,8 @@ class BrowserManager extends node_events_1.EventEmitter {
             session: ses,
             state,
             proxyHealth: { googleReached: false, targetOpened: false, captchaSeen: false, failed: false },
+            popupWindows: new Set(),
+            proxyRoutingReady: false,
             restartAttempts: 0,
             keepAliveEnabled: false,
             keepAliveHops: 0,
@@ -391,31 +396,68 @@ class BrowserManager extends node_events_1.EventEmitter {
             this.updateState(managed, { connectionStatus: 'crashed', crashCount: managed.state.crashCount + 1 });
             void this.handleCrash(managed, options);
         });
-        // Never let a link, target="_blank", or window.open() spawn a real new
-        // OS-level window. A window created that way would NOT be one of our
-        // managed BrowserViews — it would have no assigned proxy, no session
-        // isolation, and no entry in this app's UI at all, making it both
-        // untraceable from here and a proxy/anonymity leak (traffic from it
-        // goes out directly, not through this browser's proxy). Instead, open
-        // the link in this same browser/session. `did-create-window` is a
-        // defensive backstop in case some other path still manages to create
-        // one despite the deny below.
+        this.installPopupHandler(managed, wc);
+    }
+    installPopupHandler(managed, wc) {
+        // Electron's window-open handler does not expose a userGesture field.
+        // Authorize only a recent direct mouse/keyboard action in this tab.
+        let lastUserInputAt = 0;
+        wc.on('before-mouse-event', (_event, mouse) => {
+            if (mouse?.type === 'mouseDown' && (mouse.button === 'left' || mouse.button === 'middle'))
+                lastUserInputAt = Date.now();
+        });
+        wc.on('before-input-event', (_event, input) => {
+            if (input?.type === 'keyDown' && !input.isAutoRepeat && (input.key === 'Enter' || input.key === ' '))
+                lastUserInputAt = Date.now();
+        });
         wc.setWindowOpenHandler(({ url }) => {
-            Logger_1.logger.info('browser', `Browser ${id}: opening "${url}" in place instead of a new window.`);
-            void wc.loadURL(url).catch((err) => {
-                Logger_1.logger.warn('browser', `Browser ${id} failed to open in-place link ${url}: ${err.message}`);
-            });
-            return { action: 'deny' };
-        });
-        wc.on('did-create-window', (win) => {
-            Logger_1.logger.warn('browser', `Browser ${id}: a new window was created despite the deny handler — closing it.`);
+            // Only real user actions may open a child window. Keep the child in
+            // the originating browser's configured proxy session, never the
+            // application shell's default session.
+            if (this.disposed || managed.disposed || !managed.proxyRoutingReady ||
+                managed.googleConfig || managed.keepAliveEnabled ||
+                Date.now() - lastUserInputAt > 1500 || managed.popupWindows.size >= 8)
+                return { action: 'deny' };
+            lastUserInputAt = 0; // One input can authorize at most one child window.
             try {
-                win.close();
-            }
-            catch {
-                // Already gone — nothing to do.
-            }
+                const target = new URL(url || 'about:blank');
+                if (!['http:', 'https:'].includes(target.protocol) && target.href !== 'about:blank')
+                    return { action: 'deny' };
+            } catch { return { action: 'deny' }; }
+            return {
+                action: 'allow',
+                overrideBrowserWindowOptions: {
+                    webPreferences: {
+                        session: managed.session,
+                        contextIsolation: true,
+                        sandbox: true,
+                        nodeIntegration: false,
+                        webSecurity: true,
+                        javascript: true
+                    }
+                }
+            };
         });
+        wc.on('did-create-window', (popup) => {
+            // Defense in depth: abort if Electron did not inherit our isolated
+            // proxy session, or if a queued popup outlived its parent browser.
+            if (this.disposed || managed.disposed || !managed.proxyRoutingReady ||
+                popup.webContents?.session !== managed.session || managed.popupWindows.size >= 8) {
+                try { popup.destroy(); } catch { /* Already closed. */ }
+                return;
+            }
+            managed.popupWindows.add(popup);
+            popup.on('closed', () => managed.popupWindows.delete(popup));
+            this.installPopupHandler(managed, popup.webContents);
+        });
+    }
+    closePopupWindows(managed) {
+        for (const popup of managed.popupWindows) {
+            try {
+                if (!popup.isDestroyed()) popup.destroy();
+            } catch { /* A child may already be closing. */ }
+        }
+        managed.popupWindows.clear();
     }
     async handleCrash(managed, options) {
         if (this.disposed || managed.disposed || managed.view.webContents.isDestroyed()) return;
@@ -474,7 +516,9 @@ class BrowserManager extends node_events_1.EventEmitter {
         // Release the outgoing page and any navigation that was still
         // committing when the cycle ended. The local blank document installs
         // its preload immediately; this never waits for Google/target Ready.
-        const wc = this.get(id).view.webContents;
+        const managed = this.get(id);
+        this.closePopupWindows(managed);
+        const wc = managed.view.webContents;
         let navigated;
         const closed = new Promise((resolve, reject) => {
             navigated = (_event, url) => { if (url === 'about:blank') resolve(); };
@@ -603,6 +647,8 @@ class BrowserManager extends node_events_1.EventEmitter {
     async assignProxyOwned(id, proxy, managed) {
         if (this.disposed || managed.disposed || this.browsers.get(id) !== managed) return;
         managed.proxyHealth = { googleReached: false, targetOpened: false, captchaSeen: false, failed: false };
+        managed.proxyRoutingReady = false;
+        this.closePopupWindows(managed);
         this.cancelKeepAliveAction(managed);
         // Proxy changes define a new browsing generation. Cancel any old Keep
         // Alive worker here as a final safety net even if the orchestration layer
@@ -633,6 +679,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             proxyBypassRules: '<local>'
         });
         await managed.session.closeAllConnections();
+        if (!this.disposed && !managed.disposed) managed.proxyRoutingReady = true;
         // Do not reload the previous page here. webContents.reload() is
         // fire-and-forget, so the old about:blank reload could race and win
         // against the Google load started immediately after assignment.
@@ -1169,6 +1216,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         // Invalidate workers and detach/close before asynchronous storage work.
         // BrowserViews have an independent lifetime from their owning window.
         managed.disposed = true;
+        this.closePopupWindows(managed);
         this.cancelKeepAliveAction(managed);
         managed.keepAliveGeneration += 1;
         managed.keepAliveEnabled = false;
@@ -1618,13 +1666,13 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     );
     const maxScroll = () => Math.max(0, pageHeight() - window.innerHeight);
 
-    // Every article gets its own forty-second down-and-up pass. Bounded
-    // chunks retain the clock so Stop and rotation remain responsive.
+    // Read more slowly, stopping briefly at one-third and two-thirds of
+    // each direction. Bounded chunks keep Stop and rotation responsive.
     const pageKey = () => typeof location === 'undefined' ? '' : String(location.href).split('#')[0];
     const now = performance.now();
     let reading = window.__domKeepAliveReading;
     if (!reading || reading.page !== pageKey()) {
-      reading = { page: pageKey(), startedAt: now, duration: 40_000 };
+      reading = { page: pageKey(), startedAt: now, duration: 62_000 };
       window.__domKeepAliveReading = reading;
     }
     if (reading.clickedAt != null && now - reading.clickedAt < 8_500) return { reading: true };
@@ -1634,10 +1682,21 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
       if (reading.page !== pageKey()) return { reading: true };
       const tickAt = performance.now();
       const elapsed = tickAt - reading.startedAt;
-      // Hold briefly at both ends so native smooth scrolling reaches the
-      // entire page. Re-read its height to include lazy images and content.
-      const fraction = elapsed < 1_000 ? 0 : elapsed < 19_000 ? (elapsed - 1_000) / 18_000 :
-        elapsed < 21_000 ? 1 : elapsed < 39_000 ? (39_000 - elapsed) / 18_000 : 0;
+      // The page travels in 24 seconds per direction (previously 18).
+      // Pause two seconds at each third in both directions, plus at the
+      // top/bottom. Re-read page height for lazy-loaded article content.
+      const fraction = elapsed < 2_000 ? 0 :
+        elapsed < 10_000 ? (elapsed - 2_000) / 24_000 :
+        elapsed < 12_000 ? 1 / 3 :
+        elapsed < 20_000 ? 1 / 3 + (elapsed - 12_000) / 24_000 :
+        elapsed < 22_000 ? 2 / 3 :
+        elapsed < 30_000 ? 2 / 3 + (elapsed - 22_000) / 24_000 :
+        elapsed < 32_000 ? 1 :
+        elapsed < 40_000 ? 1 - (elapsed - 32_000) / 24_000 :
+        elapsed < 42_000 ? 2 / 3 :
+        elapsed < 50_000 ? 2 / 3 - (elapsed - 42_000) / 24_000 :
+        elapsed < 52_000 ? 1 / 3 :
+        elapsed < 60_000 ? 1 / 3 - (elapsed - 52_000) / 24_000 : 0;
       const desired = maxScroll() * fraction;
       if (Math.abs(desired - (window.scrollY || 0)) > 1) window.scrollTo({ top: desired, behavior: 'smooth' });
       if (elapsed >= reading.duration) break;
