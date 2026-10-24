@@ -1666,13 +1666,13 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     );
     const maxScroll = () => Math.max(0, pageHeight() - window.innerHeight);
 
-    // Every article gets its own forty-second down-and-up pass. Bounded
-    // chunks retain the clock so Stop and rotation remain responsive.
+    // Read more slowly, stopping briefly at one-third and two-thirds of
+    // each direction. Bounded chunks keep Stop and rotation responsive.
     const pageKey = () => typeof location === 'undefined' ? '' : String(location.href).split('#')[0];
     const now = performance.now();
     let reading = window.__domKeepAliveReading;
     if (!reading || reading.page !== pageKey()) {
-      reading = { page: pageKey(), startedAt: now, duration: 40_000 };
+      reading = { page: pageKey(), startedAt: now, duration: 62_000 };
       window.__domKeepAliveReading = reading;
     }
     if (reading.clickedAt != null && now - reading.clickedAt < 8_500) return { reading: true };
@@ -1682,10 +1682,21 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
       if (reading.page !== pageKey()) return { reading: true };
       const tickAt = performance.now();
       const elapsed = tickAt - reading.startedAt;
-      // Hold briefly at both ends so native smooth scrolling reaches the
-      // entire page. Re-read its height to include lazy images and content.
-      const fraction = elapsed < 1_000 ? 0 : elapsed < 19_000 ? (elapsed - 1_000) / 18_000 :
-        elapsed < 21_000 ? 1 : elapsed < 39_000 ? (39_000 - elapsed) / 18_000 : 0;
+      // The page travels in 24 seconds per direction (previously 18).
+      // Pause two seconds at each third in both directions, plus at the
+      // top/bottom. Re-read page height for lazy-loaded article content.
+      const fraction = elapsed < 2_000 ? 0 :
+        elapsed < 10_000 ? (elapsed - 2_000) / 24_000 :
+        elapsed < 12_000 ? 1 / 3 :
+        elapsed < 20_000 ? 1 / 3 + (elapsed - 12_000) / 24_000 :
+        elapsed < 22_000 ? 2 / 3 :
+        elapsed < 30_000 ? 2 / 3 + (elapsed - 22_000) / 24_000 :
+        elapsed < 32_000 ? 1 :
+        elapsed < 40_000 ? 1 - (elapsed - 32_000) / 24_000 :
+        elapsed < 42_000 ? 2 / 3 :
+        elapsed < 50_000 ? 2 / 3 - (elapsed - 42_000) / 24_000 :
+        elapsed < 52_000 ? 1 / 3 :
+        elapsed < 60_000 ? 1 / 3 - (elapsed - 52_000) / 24_000 : 0;
       const desired = maxScroll() * fraction;
       if (Math.abs(desired - (window.scrollY || 0)) > 1) window.scrollTo({ top: desired, behavior: 'smooth' });
       if (elapsed >= reading.duration) break;
