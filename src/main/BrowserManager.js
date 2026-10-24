@@ -171,7 +171,8 @@ class BrowserManager extends node_events_1.EventEmitter {
                 contextIsolation: true,
                 sandbox: true,
                 nodeIntegration: false,
-                webSecurity: true
+                webSecurity: true,
+                javascript: true
             }
         });
         const state = {
@@ -398,12 +399,26 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.installPopupHandler(managed, wc);
     }
     installPopupHandler(managed, wc) {
-        wc.setWindowOpenHandler(({ url, userGesture }) => {
+        // Electron's window-open handler does not expose a userGesture field.
+        // Authorize only a recent direct mouse/keyboard action in this tab.
+        let lastUserInputAt = 0;
+        wc.on('before-mouse-event', (_event, mouse) => {
+            if (mouse?.type === 'mouseDown' && (mouse.button === 'left' || mouse.button === 'middle'))
+                lastUserInputAt = Date.now();
+        });
+        wc.on('before-input-event', (_event, input) => {
+            if (input?.type === 'keyDown' && !input.isAutoRepeat && (input.key === 'Enter' || input.key === ' '))
+                lastUserInputAt = Date.now();
+        });
+        wc.setWindowOpenHandler(({ url }) => {
             // Only real user actions may open a child window. Keep the child in
             // the originating browser's configured proxy session, never the
             // application shell's default session.
             if (this.disposed || managed.disposed || !managed.proxyRoutingReady ||
-                userGesture !== true || managed.popupWindows.size >= 8) return { action: 'deny' };
+                managed.googleConfig || managed.keepAliveEnabled ||
+                Date.now() - lastUserInputAt > 1500 || managed.popupWindows.size >= 8)
+                return { action: 'deny' };
+            lastUserInputAt = 0; // One input can authorize at most one child window.
             try {
                 const target = new URL(url || 'about:blank');
                 if (!['http:', 'https:'].includes(target.protocol) && target.href !== 'about:blank')
@@ -417,7 +432,8 @@ class BrowserManager extends node_events_1.EventEmitter {
                         contextIsolation: true,
                         sandbox: true,
                         nodeIntegration: false,
-                        webSecurity: true
+                        webSecurity: true,
+                        javascript: true
                     }
                 }
             };
