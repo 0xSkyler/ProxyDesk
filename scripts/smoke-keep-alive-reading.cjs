@@ -55,7 +55,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         });
         const samples = [], started = Date.now();
         let visits, lastReportedPage = 1;
-        while (Date.now() - started < 165_000) {
+        while (Date.now() - started < 345_000) {
             const sample = await withinDeadline(application.evaluate(async () => {
                 const { browser, visits } = global.__domReadingProbe;
                 let document;
@@ -67,7 +67,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             if (sample.document) samples.push(sample.document);
             if (visits.length > 1) {
                 const dwell = visits.at(-1).at - visits.at(-2).at;
-                assert.ok(dwell >= 62_000, `Page ${visits.at(-2).page} was left after ${dwell} ms`);
+                assert.ok(dwell >= 136_000, `Page ${visits.at(-2).page} was left after ${dwell} ms`);
                 if (visits.at(-1).page !== lastReportedPage) {
                     console.log(`Page ${visits.at(-2).page} dwell: ${dwell} ms`);
                     lastReportedPage = visits.at(-1).page;
