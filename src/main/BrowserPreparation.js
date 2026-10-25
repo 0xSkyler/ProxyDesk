@@ -44,7 +44,7 @@ class BrowserPreparation {
                 const id = pending[next++];
                 try {
                     await this.browserManager.createBrowser(id, {
-                        persistSessions: false, startPage: 'about:blank', userAgent: '', signal
+                        persistSessions: true, startPage: 'about:blank', userAgent: '', signal
                     });
                     assertActive();
                     ready.add(id);
