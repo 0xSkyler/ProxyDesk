@@ -12,7 +12,6 @@ exports.buildGoogleResultScanScript = buildGoogleResultScanScript;
 exports.buildClickGoogleTargetResultScript = buildClickGoogleTargetResultScript;
 const node_events_1 = require("node:events");
 const electron_1 = require("electron");
-const { existsSync } = require('node:fs');
 const { join } = require('node:path');
 const constants_1 = require("../shared/constants");
 const seo_1 = require("../shared/seo");
@@ -71,11 +70,7 @@ class BrowserManager extends node_events_1.EventEmitter {
     disposing = new Map();
     disposed = false;
     loginHandler = null;
-    partitionSequence = 0;
-    reusablePartitions = new Map();
     preparationTimeoutMs = 15_000;
-    legacyCleanupTimeoutMs = 2_000;
-    clearedLegacyPartitions = new Set();
     attachWindow(window) {
         this.window = window;
         this.installGlobalLoginHandler();
@@ -109,29 +104,9 @@ class BrowserManager extends node_events_1.EventEmitter {
         electron_1.app.on('login', this.loginHandler);
     }
     partitionFor(id, _persist) {
-        const clean = this.reusablePartitions.get(id);
-        if (clean) {
-            this.reusablePartitions.delete(id);
-            return clean;
-        }
-        // Recreated IDs must not reuse a session whose delayed storage cleanup
-        // can still finish after a cancelled/failed preparation.
-        return `${buildEphemeralPartitionName(id)}-${++this.partitionSequence}`;
-    }
-    async clearLegacyPersistentPartition(id) {
-        if (this.clearedLegacyPartitions.has(id)) return;
-        this.clearedLegacyPartitions.add(id);
-        // Opening a nonexistent persistent partition creates another Chromium
-        // storage/network context. Most IDs (especially newly added browsers)
-        // have no legacy files at all, so avoid that expensive empty migration.
-        if (!existsSync(join(electron_1.app.getPath('sessionData'), 'Partitions', `browser-${id}`))) return;
-        const legacy = electron_1.session.fromPartition(`${constants_1.PARTITION_PREFIX}${id}`, { cache: true });
-        await Promise.allSettled([legacy.clearStorageData(), legacy.clearCache()]);
-    }
-    async purgeLegacyPersistentSessions(ids) {
-        for (const id of ids) {
-            await this.clearLegacyPersistentPartition(id);
-        }
+        // Every browser has an isolated persistent profile. Never evict it
+        // during cycle changes, proxy rotation or browser recreation.
+        return `${constants_1.PARTITION_PREFIX}${id}`;
     }
     async createBrowser(id, options) {
         if (this.disposed) return;
@@ -148,20 +123,9 @@ class BrowserManager extends node_events_1.EventEmitter {
         if (this.disposed || signal?.aborted) throw preparationCancelled();
         if (this.browsers.has(id))
             return;
-        // Legacy cleanup is a bounded migration, never a prerequisite for
-        // isolation: the new browser uses a fresh in-memory-only partition.
-        try {
-            await waitForPreparation(this.clearLegacyPersistentPartition(id), this.legacyCleanupTimeoutMs, signal,
-                `Browser ${id} legacy storage cleanup timed out; using a fresh memory session.`);
-        } catch (error) {
-            if (signal?.aborted) throw error;
-            Logger_1.logger.warn('browser', error.message);
-        }
-        if (this.disposed || signal?.aborted) throw preparationCancelled();
         const partition = this.partitionFor(id, options.persistSessions);
         const ses = electron_1.session.fromPartition(partition, { cache: true });
-        // A unique partition without "persist:" is already empty. Clearing it
-        // immediately would add two native storage waits to every new browser.
+        // Keep its existing cache and cookies when reusing this profile.
         if (options.userAgent)
             ses.setUserAgent(options.userAgent);
         const view = new electron_1.BrowserView({
@@ -260,11 +224,6 @@ class BrowserManager extends node_events_1.EventEmitter {
                     sender.processId !== main.processId || sender.routingId !== main.routingId))) return;
             } catch {
                 // A queued handshake can outlive its render frame on Stop.
-                return;
-            }
-            if (channel === 'dom:renderer-cache-cleared') {
-                if (managed.rendererCacheRequest?.requestId === payload?.requestId)
-                    managed.rendererCacheRequest.finish(payload.error);
                 return;
             }
             if (channel === 'dom:google-preload-ready') {
@@ -566,44 +525,14 @@ class BrowserManager extends node_events_1.EventEmitter {
         for (const managed of this.browsers.values())
             managed.view.webContents.stop();
     }
-    async clearCookies(id) {
-        await this.get(id).session.clearStorageData({ storages: ['cookies'] });
+    async clearCookies(_id) {
+        // Compatibility no-op: never delete browser storage automatically.
     }
-    async clearCache(id) {
-        const managed = this.get(id);
-        if (managed.cacheClearing) return managed.cacheClearing;
-        // Keep cookies (including Google's consent choice), while removing
-        // HTTP resources, renderer memory and Cache Storage before a new cycle.
-        const work = Promise.allSettled([
-            this.clearRendererCache(managed), managed.session.clearCache(), managed.session.clearStorageData({ storages: ['cachestorage'] })
-        ]).then(results => {
-            const failed = results.find(result => result.status === 'rejected');
-            if (failed) throw failed.reason;
-        });
-        managed.cacheClearing = work;
-        try { await work; } finally { if (managed.cacheClearing === work) managed.cacheClearing = null; }
+    async clearCache(_id) {
+        // Compatibility no-op: preserve the HTTP cache and Cache Storage.
     }
-    async clearRendererCache(managed) {
-        const requestId = (managed.rendererCacheSequence || 0) + 1;
-        managed.rendererCacheSequence = requestId;
-        const send = () => {
-            try {
-                if (!managed.view.webContents.isDestroyed()) managed.view.webContents.send('dom:clear-renderer-cache', requestId);
-            } catch { /* A frame swap can briefly invalidate the IPC target. */ }
-        };
-        const complete = new Promise((resolve, reject) => {
-            managed.rendererCacheRequest = { requestId, finish: error => error ? reject(new Error(error)) : resolve() };
-            send();
-        });
-        // Rotation can overlap a target navigation's frame swap. Replay the
-        // request into the current frame until it acknowledges cleanup.
-        const retry = setInterval(send, 250);
-        try {
-            await withTimeout(complete, 5_000, () => { throw new Error(`Browser ${managed.id} memory cache cleanup did not respond.`); });
-        } finally {
-            clearInterval(retry);
-            if (managed.rendererCacheRequest?.requestId === requestId) managed.rendererCacheRequest = null;
-        }
+    async clearRendererCache(_managed) {
+        // Compatibility no-op: preserve renderer cache.
     }
     async openDevTools(id) {
         const wc = this.get(id).view.webContents;
@@ -1225,18 +1154,10 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.browsers.delete(id);
         if (this.window && !this.window.isDestroyed()) this.window.removeBrowserView(managed.view);
         if (!managed.view.webContents.isDestroyed()) managed.view.webContents.close({ waitForBeforeUnload: false });
-        const cleanup = Promise.resolve(managed.proxyChange).catch(() => {}).then(() => Promise.allSettled([
-            managed.cacheClearing,
-            managed.session.closeAllConnections(),
-            managed.session.clearStorageData(),
-            managed.session.clearCache(),
-            managed.session.setProxy({ mode: 'direct' })
-        ])).then((results) => {
-            // Reuse only after successful cleanup. This keeps native storage
-            // context count bounded during normal shrink/regrowth while a failed
-            // cleanup can never clear data inside the next browsing session.
-            if (!this.disposed && results.every((result) => result.status === 'fulfilled'))
-                this.reusablePartitions.set(id, managed.partition);
+        // Release network connections but keep every profile data store intact.
+        const cleanup = Promise.resolve(managed.proxyChange).catch(() => {}).then(async () => {
+            await managed.session.closeAllConnections();
+            await managed.session.setProxy({ mode: 'direct' });
         });
         this.disposing.set(id, cleanup);
         try { await cleanup; } finally { this.disposing.delete(id); }
