@@ -105,11 +105,12 @@ test('100 sleeping monitors keep cancellation listeners bounded and release ever
         process.removeListener('warning', recordWarning);
     }
 });
-test('destruction closes views before stalled storage cleanup and invalidates workers', async () => {
+test('destruction closes views before slow connection cleanup and invalidates workers', async () => {
     const { manager, electron, intervals } = await managerFixture();
     manager.configureKeepAlive(60000, 1, false);
     const managed = manager.get(1), token = manager.startMeasurementSession(1);
-    const storage = deferred(); managed.session.clearStorageData = () => storage.promise;
+    const storage = deferred(); managed.session.closeAllConnections = () => storage.promise;
+    managed.session.clearStorageData = () => { throw new Error('Storage deletion is prohibited'); };
     const cleanup = manager.destroyAll(); await tick();
     assert.equal(electron.views[0].webContents.destroyed, true);
     assert.equal(electron.views[0].attached, false);
@@ -131,7 +132,7 @@ test('concurrent creation deduplicates workspace, duplicate destruction is safe'
 test('same ID recreation waits for disposal and cannot reactivate an old token', async () => {
     const { manager } = await managerFixture();
     const token = manager.startMeasurementSession(1); const wait = deferred();
-    manager.get(1).session.clearStorageData = () => wait.promise;
+    manager.get(1).session.closeAllConnections = () => wait.promise;
     const disposal = manager.destroyBrowser(1); await tick();
     const creation = manager.createBrowser(1, { startPage: 'about:blank' }); await tick();
     assert.equal(manager.browsers.has(1), false);
@@ -318,8 +319,9 @@ test('main quit awaits owned cleanup and disposes handlers before final quit', a
     await withTimeout(rendererShown.promise, 2_000, () => { throw new Error('Renderer was not shown after browser preparation.'); });
     assert.equal(windows[0].shown, true); assert.ok(windows[0].file.endsWith(path.join('renderer', 'index.html')));
     assert.equal(handlers.size, 9); assert.equal(electron.views.length, 10);
-    const pending = deferred(); const activeSession = [...electron.sessions.entries()].find(([name]) => !name.startsWith('persist:'))[1];
-    activeSession.clearStorageData = () => pending.promise;
+    const pending = deferred(); const activeSession = [...electron.sessions.entries()].find(([name]) => name.startsWith('persist:'))[1];
+    activeSession.clearStorageData = () => { throw new Error('Storage deletion is prohibited'); };
+    activeSession.closeAllConnections = () => pending.promise;
     electron.app.quit(); await tick();
     assert.equal(finalQuit, false); assert.equal(handlers.size, 0); assert.equal(intervals.size, 0);
     assert.equal(electron.views.every((view) => view.webContents.isDestroyed()), true);

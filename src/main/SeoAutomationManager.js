@@ -288,7 +288,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.emitState();
         const seoTasks = [];
         try {
-            // Stop all outgoing work before clearing any session's cache.
+            // Stop outgoing work before navigation; keep all session data.
             for (const id of browserIds) {
                 if (!this.isCurrent(generation))
                     return;
@@ -306,14 +306,14 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                             `Browser ${id} proxy reset timed out before the next cycle.`);
                     }
                     if (!this.isCurrent(generation) || signal.aborted) return;
-                    await this.browserManager.prepareCycleDocument(id, signal);
+                    await waitForPreparation(this.browserManager.prepareCycleDocument(id, signal), 15_000, signal,
+                        `Browser ${id} page preparation timed out before the next cycle.`);
                     if (!this.isCurrent(generation) || signal.aborted) return;
-                    await waitForPreparation(this.browserManager.clearCache(id), 15_000, signal,
-                        `Browser ${id} cache cleanup timed out; no new searches were started.`);
                 }
             };
-            // Bound native cleanup to two browsers at a time on small PCs.
-            // Proxy fetching/searching cannot start until every cache is clean.
+            // Bound page preparation to two browsers at a time on small PCs.
+            // Proxy fetching/searching starts only after all pages are released.
+            // No cache, cookie or local-storage clearing occurs.
             try {
                 await Promise.all(Array.from({ length: Math.min(2, browserIds.length) }, cleanBrowser));
             } catch (error) { cleanupController.abort(); throw error; }

@@ -14,7 +14,7 @@ function controllerFixture(health, fetchAssignDirect) {
         getProxyRotationState: id => ({ ...states.get(id) }), prepareCycleDocument: async () => {},
         beginProxyCycle: id => events.push(['begin', id]),
         cancelMeasurementSession: id => events.push(['stop', id]),
-        setBrowserKeepAlive() {}, clearCache: async id => events.push(['clean', id]),
+        setBrowserKeepAlive() {}, clearCache: () => { throw new Error('Cache deletion must never occur'); },
         assignProxy: async (id, value) => { events.push(['proxy', id, value?.id || null]); },
         startMeasurementSession: () => 1
     };
@@ -33,7 +33,7 @@ test('only failed/unproven slots rotate, retained browsers keep routing and move
         { proxy: proxy(3), googleReached: true, targetOpened: true, captchaSeen: false, failed: true }
     ], async (ids, assign, progress, source) => {
         fetchedIds = [...ids]; options = source;
-        assert.equal(f.events.filter(e => e[0] === 'clean').length, 3);
+        assert.equal(f.events.filter(e => e[0] === 'clean').length, 0, 'cache must be retained');
         assert.equal(f.events.filter(e => e[0] === 'search').length, 2, 'healthy searches must start before the provider request finishes');
         progress(4, 4, 1, 1, 4); assign({ browserId: 3, proxy: proxy(4) });
     });
@@ -53,7 +53,7 @@ test('all-healthy cycles never call the API or reset routing, and keywords wrap 
         async () => { throw new Error('Healthy cycles must not fetch proxies'); });
     await f.automation.runCycle(); await f.automation.runCycle(); await f.automation.runCycle();
     assert.equal(f.events.filter(e => e[0] === 'proxy').length, 0);
-    assert.equal(f.events.filter(e => e[0] === 'clean').length, 9);
+    assert.equal(f.events.filter(e => e[0] === 'clean').length, 0, 'all-healthy cycles preserve cache');
     assert.deepEqual(f.events.filter(e => e[0] === 'search').map(e => e.slice(1)), [
         [1, 'second', 2], [2, 'third', 2], [3, 'first', 2],
         [1, 'third', 3], [2, 'first', 3], [3, 'second', 3],

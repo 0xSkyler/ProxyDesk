@@ -67,3 +67,28 @@ test('disabled, foreign-frame, stale-document and invalid-coordinate prompt mess
         assert.equal(f.inputs.length, 0);
     } finally { await f.manager.destroyAll(); }
 });
+
+
+test('ordinary-site cookie consent uses bounded native clicks in its own main frame', async () => {
+    const f = await fixture();
+    try {
+        f.wc.url = 'https://research.example/article';
+        const payload = { documentUrl: f.wc.url, documentId: 'cookie-document', point: { x: 160, y: 120 } };
+        f.emit('dom:site-cookie-consent-click', payload);
+        assert.deepEqual(f.inputs.map(event => event.type), ['mouseMove', 'mouseDown', 'mouseUp']);
+        f.emit('dom:site-cookie-consent-click', payload);
+        assert.equal(f.inputs.length, 3, 'rapid duplicate clicks must be suppressed');
+        f.browser.siteConsentClick.at -= 2000;
+        f.emit('dom:site-cookie-consent-click', payload);
+        assert.equal(f.inputs.length, 6, 'a still-visible consent button may retry');
+
+        for (const bad of [
+            { ...payload, documentUrl: 'https://unrelated.example/' },
+            { ...payload, point: { x: -1, y: 20 } },
+            { ...payload, point: { x: 900, y: 20 } },
+            { ...payload, point: { x: 10, y: 650 } }
+        ]) f.emit('dom:site-cookie-consent-click', bad);
+        f.emit('dom:site-cookie-consent-click', payload, { processId: 2, routingId: 3 });
+        assert.equal(f.inputs.length, 6, 'invalid frames, URLs and coordinates cannot click');
+    } finally { await f.manager.destroyAll(); }
+});

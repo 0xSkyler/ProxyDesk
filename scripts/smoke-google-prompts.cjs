@@ -173,13 +173,16 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 stats.standaloneContinue = { requests: continueRequests };
                 await manager.destroyBrowser(622);
 
-                // Native HTTP cache + Cache Storage: the next page must refetch
-                // an image, while the per-browser consent cookie remains intact.
+                // HTTP cache, Cache Storage and consent cookies must survive
+                // navigation, rotation and browser destruction/recreation.
                 const http = load('node:http'); let imageRequests = 0;
                 server = http.createServer((request, response) => {
                     if (request.url === '/cached.svg') {
                         imageRequests++; response.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' });
                         response.end('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="blue"/></svg>');
+                    } else if (request.url === '/cookie-banner') {
+                        response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+                        response.end(html('<div role="dialog" id="site-cookie-consent"><h1>Cookie preferences</h1><p>This website uses cookies to store your preferences.</p><button onclick="document.cookie=&#39;siteAccepted=1;path=/&#39;;document.getElementById(&#39;site-cookie-consent&#39;).remove()">Accept all</button></div>') + '</body></html>');
                     } else {
                         response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
                         response.end(html('<img src="/cached.svg"><h1>Cache fixture</h1>') + '</body></html>');
@@ -188,17 +191,32 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
                 await manager.createBrowser(630, { startPage: 'about:blank' });
                 const cached = manager.get(630), origin = `http://127.0.0.1:${server.address().port}`;
+                cached.view.setBounds({ x: 0, y: 0, width: 940, height: 650 });
+                await cached.view.webContents.loadURL(origin + '/cookie-banner');
+                for (let count = 0; count < 40 && (await cookies(cached)).siteAccepted !== '1'; count++) await pause(100);
+                if ((await cookies(cached)).siteAccepted !== '1') throw new Error('Ordinary-site cookie banner was not accepted automatically');
                 await cached.view.webContents.loadURL(origin + '/one');
                 await cached.view.webContents.loadURL(origin + '/two');
-                if (imageRequests !== 1) throw new Error('HTTP fixture was not cached before cleanup: ' + imageRequests);
+                if (imageRequests !== 1) throw new Error('HTTP fixture was not cached before cycle: ' + imageRequests);
                 await cached.view.webContents.executeJavaScript(`(async()=>{document.cookie='accepted=1;path=/';const c=await caches.open('cycle-test');await c.put('/stored',new Response('cached'));})()`);
-                await manager.clearCache(630);
+                await manager.clearCache(630); // Compatibility API must be a no-op.
                 const cacheKeys = await cached.view.webContents.executeJavaScript('caches.keys()');
-                if (cacheKeys.length) throw new Error('Cache Storage survived native cleanup');
-                if ((await cookies(cached)).accepted !== '1') throw new Error('Cache cleanup removed consent cookies');
+                if (!cacheKeys.includes('cycle-test')) throw new Error('Cache Storage unexpectedly cleared');
+                if ((await cookies(cached)).accepted !== '1') throw new Error('Consent cookie was removed');
                 await cached.view.webContents.loadURL(origin + '/three');
-                if (imageRequests !== 2) throw new Error('Next page reused its old HTTP cache: ' + imageRequests);
-                stats.cache = { before: 1, after: imageRequests, cacheStorageEmpty: true, consentCookieRetained: true };
+                if (imageRequests !== 1) throw new Error('HTTP cache was deleted between navigations: ' + imageRequests);
+                await manager.destroyBrowser(630);
+                await manager.createBrowser(630, { startPage: 'about:blank' });
+                const restored = manager.get(630);
+                restored.view.setBounds({ x: 0, y: 0, width: 940, height: 650 });
+                await restored.view.webContents.loadURL(origin + '/four');
+                if (imageRequests !== 1) throw new Error('Browser recreation lost HTTP cache: ' + imageRequests);
+                const restoredKeys = await restored.view.webContents.executeJavaScript('caches.keys()');
+                if (!restoredKeys.includes('cycle-test')) throw new Error('Browser recreation lost Cache Storage');
+                const persisted = await cookies(restored);
+                if (persisted.accepted !== '1' || persisted.siteAccepted !== '1') throw new Error('Browser recreation lost consent cookies');
+                stats.cache = { before: 1, after: imageRequests, cacheStorageRetained: true, consentCookieRetained: true,
+                    siteConsentAccepted: true, persistentAfterRecreation: true };
                 return stats;
             } finally {
                 for (const timer of timers) clearTimeout(timer);

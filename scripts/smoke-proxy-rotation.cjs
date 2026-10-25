@@ -60,10 +60,10 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             try {
                 for (const id of ids) {
                     await manager.createBrowser(id, { startPage: 'about:blank', persistSessions: false });
-                    const managed = manager.get(id), trace = { keywords: [], targets: 0, routingChanges: 0, connectionResets: 0, cacheClears: 0, targetBeforeReady: false, recovered: false, failTarget: false, preloadErrors: [], cacheIpc: [] };
+                    const managed = manager.get(id), trace = { keywords: [], targets: 0, routingChanges: 0, connectionResets: 0, cacheClears: 0, storageClears: 0, targetBeforeReady: false, recovered: false, failTarget: false, preloadErrors: [], cacheIpc: [] };
                     managed.view.webContents.on('preload-error', (_event, _file, error) => trace.preloadErrors.push(error.message));
                     managed.view.webContents.on('ipc-message', (event, channel, payload) => {
-                        if (!['dom:google-preload-ready', 'dom:renderer-cache-cleared'].includes(channel)) return;
+                        if (!['dom:google-preload-ready'].includes(channel)) return;
                         let sender, main;
                         try { sender = event.senderFrame; main = managed.view.webContents.mainFrame; } catch {}
                         trace.cacheIpc.push({ channel, requestId: payload?.requestId, error: payload?.error,
@@ -72,10 +72,10 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                     traces.set(id, trace); managed.view.setBounds({ x: 0, y: 0, width: 920, height: 640 });
                     const setProxy = managed.session.setProxy.bind(managed.session);
                     const close = managed.session.closeAllConnections.bind(managed.session);
-                    const clear = managed.session.clearCache.bind(managed.session);
+                    managed.session.clearCache = () => { trace.cacheClears++; throw new Error('Cache deletion forbidden'); };
+                    managed.session.clearStorageData = () => { trace.storageClears++; throw new Error('Storage deletion forbidden'); };
                     managed.session.setProxy = options => { trace.routingChanges++; return setProxy(options); };
                     managed.session.closeAllConnections = () => { trace.connectionResets++; return close(); };
-                    managed.session.clearCache = () => { trace.cacheClears++; return clear(); };
                     managed.view.webContents.on('did-navigate', (_event, url) => {
                         if (url.startsWith('https://appareldiary.com/') && manager.getProxyRotationState(id).targetOpened)
                             trace.targetBeforeReady ||= managed.view.webContents.isLoading();
@@ -154,13 +154,13 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 if (apiCalls !== 2) throw new Error('All-qualified cycle called the unavailable API');
                 const third = ids.map(id => ({ id, proxy: manager.get(id).state.proxy.host, keyword: traces.get(id).keywords.at(-1), cacheClears: traces.get(id).cacheClears }));
                 if (third.map(r => r.keyword).join(',') !== expectedKeywords(3)) throw new Error('Third-cycle keywords did not advance');
-                if (third.some((row, index) => row.proxy !== second[index].proxy || row.cacheClears !== 3))
-                    throw new Error('All-qualified cycle changed routing or skipped per-cycle cache cleanup');
+                if (third.some((row, index) => row.proxy !== second[index].proxy || row.cacheClears !== 0 || traces.get(row.id).storageClears !== 0))
+                    throw new Error('All-qualified cycle changed routing or deleted cache/storage');
                 if (automation.getState().retainedBrowsers !== ids.length || automation.getState().replacedBrowsers !== 0)
                     throw new Error('All-qualified retention counters are incorrect');
                 return { apiCalls, first, second, third, healthyRoutingUnchanged: true, allHealthyApiSkipped: true,
                     captchaRecoveredButReplaced: true, captchaRedirectReplaced: true, googleOnlyReplaced: true,
-                    failureAfterTargetReplaced: true, targetOpenedBeforeReady: true, cacheClearedEveryCycle: true, exactKeywordRotation: true };
+                    failureAfterTargetReplaced: true, targetOpenedBeforeReady: true, cachePreservedEveryCycle: true, exactKeywordRotation: true };
             } finally {
                 automation.stop(); await manager.destroyAll(); window.destroy();
                 server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
