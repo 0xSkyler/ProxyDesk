@@ -3,6 +3,84 @@
 // Shared by the sandboxed BrowserView preload and the main-process script
 // builders. Keep these functions self-contained: sandboxed preloads cannot
 // require application modules, and the same recognizer must handle every path.
+
+// Generic cookie-consent support for sites other than Google. Only explicit
+// positive cookie-banner choices qualify; unrelated Accept/Continue buttons
+// must never be activated.
+function inspectSiteCookieConsent() {
+    if (!/^https?:$/.test(location.protocol) ||
+        /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(location.hostname)) return null;
+    const clean = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+    const positive = /^(accept all(?: cookies)?|accept (?:all )?cookies|accept|allow all(?: cookies)?|allow cookies|i agree|yes,? i agree|agree and continue|agree|accept and continue|accept & continue|ok|okay|got it|alle akzeptieren|alle cookies akzeptieren|tout accepter|accepter tout|aceptar todas?|accetta tutti|aceitar todos|সব গ্রহণ করুন)$/i;
+    const contextWords = /cook(?:ie|ies)|consent|tracking|privacy preference|personal data|gdpr|donn[eé]es personnelles|datenschutz|galletas/i;
+    const banner = '[role="dialog"],dialog,[aria-modal="true"],[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[id*="privacy" i],[class*="privacy" i],[id*="onetrust" i],[class*="onetrust" i]';
+    for (const button of document.querySelectorAll('button,input[type="button"],input[type="submit"],[role="button"]')) {
+        const label = clean(button.innerText || button.textContent || button.value || button.getAttribute('aria-label'));
+        if (!positive.test(label) || !button.isConnected || button.closest('[hidden],[inert]')) continue;
+        const style = getComputedStyle(button);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0' ||
+            style.pointerEvents === 'none' || ![...button.getClientRects()].some(r => r.width && r.height) ||
+            button.disabled || button.matches(':disabled') || button.getAttribute('aria-disabled') === 'true') continue;
+        let scope = button.closest(banner);
+        if (!scope) {
+            // Some banners have no semantic wrapper. Limit the search to the
+            // immediate few ancestors to avoid using an unrelated footer label.
+            let node = button.parentElement;
+            for (let i = 0; i < 4 && node && node !== document.body; i++, node = node.parentElement) {
+                const words = clean(node.innerText || node.textContent).slice(0, 1800);
+                if (contextWords.test(words)) { scope = node; break; }
+            }
+        }
+        if (!scope) continue;
+        const words = clean(scope.innerText || scope.textContent).slice(0, 2500);
+        const identity = clean(String(scope.id || '') + ' ' + String(scope.className || ''));
+        if (!contextWords.test(words) && !/cookie|consent|gdpr|onetrust/i.test(identity)) continue;
+        return button;
+    }
+    return null;
+}
+function installSiteCookieConsentObserver(activate = null) {
+    window.__domSiteCookieConsentWatcher?.stop();
+    let stopped = false, pending = null, polls = 0;
+    const attempts = new WeakMap();
+    function scan() {
+        pending = null;
+        if (stopped) return;
+        const button = inspectSiteCookieConsent();
+        if (!button) return;
+        const now = performance.now();
+        const count = attempts.get(button) || { at: -Infinity, count: 0 };
+        if (now - count.at < 2_000 || count.count >= 3) return;
+        attempts.set(button, { at: now, count: count.count + 1 });
+        try {
+            button.focus({ preventScroll: true });
+            if (activate) {
+                button.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+                const r = button.getBoundingClientRect();
+                const left = Math.max(0, r.left), right = Math.min(innerWidth, r.right);
+                const top = Math.max(0, r.top), bottom = Math.min(innerHeight, r.bottom);
+                if (right > left && bottom > top)
+                    activate({ point: { x: Math.floor((left + right) / 2), y: Math.floor((top + bottom) / 2) } });
+            } else button.click();
+        } catch { /* Navigation can dispose a consent element mid-action. */ }
+    }
+    function schedule() { if (!stopped && pending === null) pending = setTimeout(scan, 250); }
+    function stop() {
+        stopped = true;
+        observer.disconnect(); clearTimeout(pending); clearInterval(heartbeat);
+        document.removeEventListener('readystatechange', schedule);
+    }
+    const observer = new MutationObserver(schedule);
+    observer.observe(document, { subtree: true, childList: true, attributes: true,
+        attributeFilter: ['disabled', 'aria-disabled', 'style', 'class', 'hidden'] });
+    const heartbeat = setInterval(() => {
+        if (++polls >= 45) stop(); else schedule();
+    }, 2_000);
+    document.addEventListener('readystatechange', schedule);
+    window.__domSiteCookieConsentWatcher = { stop };
+    scan();
+}
+
 function inspectGooglePrompt() {
     const google = /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(location.hostname);
     if (!google) return null;
@@ -506,16 +584,15 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
 }
 
 if (typeof process !== 'undefined' && process.type === 'renderer') {
-    const { ipcRenderer, webFrame } = require('electron');
+    const { ipcRenderer } = require('electron');
     let active = null;
-    ipcRenderer.on('dom:clear-renderer-cache', (_event, requestId) => {
-        try {
-            webFrame.clearCache();
-            ipcRenderer.send('dom:renderer-cache-cleared', { requestId });
-        } catch (error) {
-            ipcRenderer.send('dom:renderer-cache-cleared', { requestId, error: String(error.message || error) });
-        }
-    });
+    // Active on every top-level website, not just Google.
+    if (window === window.top && /^https?:$/.test(location.protocol)) {
+        const documentId = String(performance.timeOrigin);
+        installSiteCookieConsentObserver(prompt => ipcRenderer.send('dom:site-cookie-consent-click',
+            { documentUrl: location.href, documentId, ...prompt }));
+        addEventListener('pagehide', () => window.__domSiteCookieConsentWatcher?.stop(), { once: true });
+    }
     if (window === window.top && /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(location.hostname)) {
         const documentId = String(performance.timeOrigin);
         installGooglePromptObserver(state => {
@@ -556,5 +633,5 @@ if (typeof process !== 'undefined' && process.type === 'renderer') {
     // This handshake runs at document start, before DOMContentLoaded or load.
     ipcRenderer.send('dom:google-preload-ready');
 } else if (typeof module !== 'undefined') {
-    module.exports = { inspectGooglePrompt, installGooglePromptObserver, recognizeGoogleResults, installGoogleResultObserver };
+    module.exports = { inspectSiteCookieConsent, installSiteCookieConsentObserver, inspectGooglePrompt, installGooglePromptObserver, recognizeGoogleResults, installGoogleResultObserver };
 }
