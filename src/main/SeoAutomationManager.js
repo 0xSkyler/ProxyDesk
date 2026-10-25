@@ -306,7 +306,8 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                             `Browser ${id} proxy reset timed out before the next cycle.`);
                     }
                     if (!this.isCurrent(generation) || signal.aborted) return;
-                    await this.browserManager.prepareCycleDocument(id, signal);
+                    await waitForPreparation(this.browserManager.prepareCycleDocument(id, signal), 15_000, signal,
+                        `Browser ${id} page preparation timed out before the next cycle.`);
                     if (!this.isCurrent(generation) || signal.aborted) return;
                 }
             };
