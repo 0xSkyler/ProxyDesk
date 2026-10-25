@@ -226,6 +226,26 @@ class BrowserManager extends node_events_1.EventEmitter {
                 // A queued handshake can outlive its render frame on Stop.
                 return;
             }
+            if (channel === 'dom:site-cookie-consent-click') {
+                // The isolated preload only reports a visible positive choice
+                // inside a genuine cookie-consent banner. Use a native click
+                // for sites whose CMP requires trusted pointer events.
+                if (!payload || payload.documentUrl !== wc.getURL() ||
+                    typeof payload.documentId !== 'string') return;
+                const point = payload.point, bounds = managed.view.getBounds();
+                if (!Number.isInteger(point?.x) || !Number.isInteger(point?.y) ||
+                    point.x < 0 || point.y < 0 || point.x >= bounds.width || point.y >= bounds.height) return;
+                const last = managed.siteConsentClick;
+                const now = Date.now();
+                if (last?.documentId === payload.documentId && now - last.at < 1_500) return;
+                managed.siteConsentClick = { documentId: payload.documentId, at: now };
+                try {
+                    wc.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y });
+                    wc.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+                    wc.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+                } catch { /* Navigation can dispose the web contents. */ }
+                return;
+            }
             if (channel === 'dom:google-preload-ready') {
                 try {
                     event.reply('dom:google-config', managed.googleConfig || null);
