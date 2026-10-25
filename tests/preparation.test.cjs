@@ -19,16 +19,15 @@ function browserFixture() {
     return { manager, electron };
 }
 
-test('stalled legacy storage cannot hold a fresh browser at Starting forever', async () => {
+test('browser startup never clears an existing profile or waits on legacy migration', async () => {
     const { manager } = browserFixture();
-    const legacy = deferred();
-    manager.clearLegacyPersistentPartition = () => legacy.promise;
-    const work = manager.createBrowser(1, { startPage: 'about:blank' });
+    manager.clearLegacyPersistentPartition = () => { throw new Error('Unexpected legacy storage deletion'); };
+    await manager.createBrowser(1, { startPage: 'about:blank', persistSessions: false });
     try {
-        await withTimeout(work, 200, () => { throw new Error('Startup remained blocked on legacy storage.'); });
         assert.equal(manager.getAll().length, 1);
+        assert.equal(manager.get(1).partition, 'persist:browser-1');
         assert.equal(manager.get(1).state.loading, false);
-    } finally { legacy.resolve(); await work.catch(() => {}); await manager.destroyAll(); }
+    } finally { await manager.destroyAll(); }
 });
 
 test('stalled initial renderer reports failure, closes its view, and can retry', async () => {
@@ -122,23 +121,32 @@ test('Stop settles Start even if browser preparation never resolves or handles c
     } finally { preparation.resolve([]); await work.catch(() => {}); }
 });
 
-test('normal recreation reuses a fully cleaned memory partition without another storage barrier', async () => {
+test('normal recreation keeps the same persistent profile and original data', async () => {
     const { manager } = browserFixture();
     await manager.createBrowser(1, { startPage: 'about:blank' });
     const first = manager.get(1).session;
+    first.storageMarker = 'keep';
+    first.clearStorageData = () => { throw new Error('Storage must not be cleared'); };
+    first.clearCache = () => { throw new Error('Cache must not be cleared'); };
     await manager.destroyBrowser(1);
-    first.clearStorageData = () => { throw new Error('Empty partition must not be cleared again during creation'); };
     await manager.createBrowser(1, { startPage: 'about:blank' });
     const second = manager.get(1).session;
-    try { assert.equal(first, second); } finally { first.clearStorageData = async () => {}; await manager.destroyAll(); }
+    assert.equal(first, second);
+    assert.equal(second.storageMarker, 'keep');
+    await manager.destroyAll();
 });
 
-test('failed cleanup cannot contaminate the recreated browser memory session', async () => {
+test('browser profiles remain separate while retaining each ID across recreation', async () => {
     const { manager } = browserFixture();
     await manager.createBrowser(1, { startPage: 'about:blank' });
-    const first = manager.get(1).session;
-    first.clearStorageData = async () => { throw new Error('storage failure'); };
+    await manager.createBrowser(2, { startPage: 'about:blank' });
+    const first = manager.get(1).session, second = manager.get(2).session;
+    first.cookie = 'one'; second.cookie = 'two';
     await manager.destroyBrowser(1);
     await manager.createBrowser(1, { startPage: 'about:blank' });
-    try { assert.notEqual(first, manager.get(1).session); } finally { await manager.destroyAll(); }
+    assert.equal(manager.get(1).session, first);
+    assert.notEqual(manager.get(1).session, second);
+    assert.equal(first.cookie, 'one');
+    assert.equal(second.cookie, 'two');
+    await manager.destroyAll();
 });
