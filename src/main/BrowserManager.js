@@ -1607,14 +1607,20 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     );
     const maxScroll = () => Math.max(0, pageHeight() - window.innerHeight);
 
-    // Read more slowly, stopping briefly at one-third and two-thirds of
-    // each direction. Bounded chunks keep Stop and rotation responsive.
+    // Control reading speed by pixels rather than finishing every article
+    // in the same fixed 62 seconds. A longer page needs more time, not faster
+    // motion. The state survives each bounded DOM action and dynamic page growth.
     const pageKey = () => typeof location === 'undefined' ? '' : String(location.href).split('#')[0];
     const now = performance.now();
     let reading = window.__domKeepAliveReading;
     if (!reading || reading.page !== pageKey()) {
-      reading = { page: pageKey(), startedAt: now, duration: 62_000 };
+      const initialDistance = maxScroll();
+      reading = { page: pageKey(), startedAt: now, phase: 'top',
+        phaseAt: now, lastAt: now, position: 0, pauseIndex: 0,
+        speed: Math.max(1, Math.min(80, initialDistance / 60)) };
       window.__domKeepAliveReading = reading;
+      // Start each article at its beginning, even if the browser landed midway.
+      if (Math.abs(window.scrollY || 0) > 1) window.scrollTo({ top: 0, behavior: 'instant' });
     }
     if (reading.clickedAt != null && now - reading.clickedAt < 8_500) return { reading: true };
     reading.clickedAt = undefined;
@@ -1622,28 +1628,77 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     while (performance.now() < deadline) {
       if (reading.page !== pageKey()) return { reading: true };
       const tickAt = performance.now();
-      const elapsed = tickAt - reading.startedAt;
-      // The page travels in 24 seconds per direction (previously 18).
-      // Pause two seconds at each third in both directions, plus at the
-      // top/bottom. Re-read page height for lazy-loaded article content.
-      const fraction = elapsed < 2_000 ? 0 :
-        elapsed < 10_000 ? (elapsed - 2_000) / 24_000 :
-        elapsed < 12_000 ? 1 / 3 :
-        elapsed < 20_000 ? 1 / 3 + (elapsed - 12_000) / 24_000 :
-        elapsed < 22_000 ? 2 / 3 :
-        elapsed < 30_000 ? 2 / 3 + (elapsed - 22_000) / 24_000 :
-        elapsed < 32_000 ? 1 :
-        elapsed < 40_000 ? 1 - (elapsed - 32_000) / 24_000 :
-        elapsed < 42_000 ? 2 / 3 :
-        elapsed < 50_000 ? 2 / 3 - (elapsed - 42_000) / 24_000 :
-        elapsed < 52_000 ? 1 / 3 :
-        elapsed < 60_000 ? 1 / 3 - (elapsed - 52_000) / 24_000 : 0;
-      const desired = maxScroll() * fraction;
-      if (Math.abs(desired - (window.scrollY || 0)) > 1) window.scrollTo({ top: desired, behavior: 'smooth' });
-      if (elapsed >= reading.duration) break;
+      // A throttled/backgrounded tab cannot jump an entire section on resume.
+      const dt = Math.min(200, Math.max(0, tickAt - reading.lastAt));
+      reading.lastAt = tickAt;
+      const bottom = maxScroll();
+      // At least sixty seconds per direction on short pages. Long pages
+      // are limited to eighty pixels per second, even after lazy loading.
+      reading.speed = Math.max(1, Math.min(80, Math.max(reading.speed, bottom / 60)));
+      if (reading.phase === 'top') {
+        if (tickAt - reading.phaseAt >= 3_000) {
+          reading.phase = 'down';
+          reading.phaseAt = tickAt;
+        }
+      } else if (reading.phase === 'down') {
+        const next = Math.min(bottom, reading.position + reading.speed * dt / 1_000);
+        const checkpoint = bottom * (reading.pauseIndex + 1) / 3;
+        if (reading.pauseIndex < 2 && checkpoint > 0.1 && next >= checkpoint - 0.1) {
+          reading.position = checkpoint;
+          reading.pauseIndex++;
+          reading.phase = 'down-pause';
+          reading.phaseAt = tickAt;
+        } else if (next >= bottom - 0.1) {
+          reading.position = bottom;
+          reading.phase = 'bottom';
+          reading.phaseAt = tickAt;
+        } else {
+          reading.position = next;
+        }
+      } else if (reading.phase === 'down-pause') {
+        if (tickAt - reading.phaseAt >= 3_000) {
+          reading.phase = 'down';
+          reading.phaseAt = tickAt;
+        }
+      } else if (reading.phase === 'bottom') {
+        if (bottom > reading.position + 1) {
+          // A lazy-loaded image extended the article: visit the new bottom.
+          reading.phase = 'down';
+          reading.phaseAt = tickAt;
+        } else if (tickAt - reading.phaseAt >= 3_000) {
+          reading.phase = 'up';
+          reading.phaseAt = tickAt;
+          reading.pauseIndex = 0;
+        }
+      } else if (reading.phase === 'up') {
+        const next = Math.max(0, reading.position - reading.speed * dt / 1_000);
+        const checkpoint = bottom * (2 - reading.pauseIndex) / 3;
+        if (reading.pauseIndex < 2 && checkpoint > 0.1 && next <= checkpoint + 0.1) {
+          reading.position = checkpoint;
+          reading.pauseIndex++;
+          reading.phase = 'up-pause';
+          reading.phaseAt = tickAt;
+        } else if (next <= 0.1) {
+          reading.position = 0;
+          reading.phase = 'finish';
+          reading.phaseAt = tickAt;
+        } else {
+          reading.position = next;
+        }
+      } else if (reading.phase === 'up-pause') {
+        if (tickAt - reading.phaseAt >= 3_000) {
+          reading.phase = 'up';
+          reading.phaseAt = tickAt;
+        }
+      } else if (reading.phase === 'finish' && tickAt - reading.phaseAt >= 3_000) {
+        reading.phase = 'done';
+      }
+      if (Math.abs(reading.position - (window.scrollY || 0)) > 1)
+        window.scrollTo({ top: reading.position, behavior: 'smooth' });
+      if (reading.phase === 'done') break;
       await wait(Math.min(200, Math.max(1, deadline - performance.now())));
     }
-    if (reading.page !== pageKey() || performance.now() - reading.startedAt < reading.duration)
+    if (reading.page !== pageKey() || reading.phase !== 'done')
       return { reading: true };
 
     if (!${allowHop ? 'true' : 'false'}) return {};
