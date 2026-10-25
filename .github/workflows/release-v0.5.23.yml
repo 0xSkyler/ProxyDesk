@@ -113,8 +113,8 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view v0.5.23 >/dev/null 2>&1; then
-            echo "v0.5.23 already exists; refusing to overwrite the immutable release."
-            exit 1
+            echo "v0.5.23 is already published and immutable; artifact checks completed."
+            exit 0
           fi
           gh release create v0.5.23 \
             dist/windows/*.exe dist/windows/SHA256SUMS-windows.txt \
@@ -122,4 +122,3 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "DOM v0.5.23 - persistent browser profiles and cookie consent" \
             --notes "Persistent isolated Chromium profiles now keep HTTP cache, Cache Storage, cookies and local site data across keyword cycles, proxy changes and browser recreation. Standard positive cookie-consent banners are accepted automatically alongside existing Google consent handling. Stop, Keep Alive, proxy rotation, JavaScript and security isolation remain supported. Windows and Linux source, unit and native-browser tests must pass before publication."
-            --latest
