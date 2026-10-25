@@ -149,8 +149,11 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                     void managed.view.webContents.loadURL(url).catch(() => {});
                     await pause(1_700);
                     const choices = await cookies(managed);
-                    if (choices.accepted || choices.continued || choices.rejected) throw new Error(`${mode}: automatic button handler escaped its scope`);
-                    stats[mode] = { clicked: false }; await manager.destroyBrowser(id);
+                    if (mode === 'captcha' && (choices.accepted || choices.continued || choices.rejected))
+                        throw new Error('CAPTCHA must not be activated automatically');
+                    if (mode === 'foreign' && (choices.accepted !== '1' || choices.continued || choices.rejected))
+                        throw new Error('Ordinary website cookie consent must be accepted, without other clicks');
+                    stats[mode] = { clicked: mode === 'foreign' }; await manager.destroyBrowser(id);
                 }
                 // A verification Continue redirect is handled even without a
                 // result scanner/config, as on Google's standalone screen.
