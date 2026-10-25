@@ -36,98 +36,113 @@ async function finish(reading, hop = true, deadline = reading.time + 10_000) {
     assert.fail('Reading did not finish within its expected time');
 }
 
-test('each new article gets sixty-two seconds of full-page down-and-up scrolling before an actual link click', async () => {
+test('each new article scrolls slowly for at least two minutes before following an internal link', async () => {
     const reading = reader();
     for (let page = 0; page < 2; page++) {
         const started = reading.time;
-        assert.equal((await reading.run()).reading, true);
-        assert.equal((await reading.run()).reading, true);
-        assert.equal((await reading.run()).reading, true);
-        assert.equal(reading.clicks.length, page, 'chunks cannot bypass the dwell');
-        const result = await finish(reading, true, started + 63_000);
+        for (let i = 0; i < 3; i++) assert.equal((await reading.run()).reading, true);
+        assert.equal(reading.clicks.length, page, 'bounded chunks cannot bypass reading time');
+        const result = await finish(reading, true, started + 155_000);
         assert.equal(result.clickedUrl, 'https://reading.test/article/' + (page + 2));
-        assert.ok(reading.clicks[page].at - started >= 62_000);
-        const positions = reading.scrolls.filter(s => s.page.endsWith('/' + (page + 1)));
-        assert.ok(positions.some(s => s.to > s.from), 'must scroll down');
-        assert.ok(positions.some(s => s.to < s.from), 'must scroll back up');
-        assert.equal(Math.max(...positions.map(s => s.to)), 800, 'must reach the page bottom');
+        const dwell = reading.clicks[page].at - started;
+        assert.ok(dwell >= 136_000 && dwell <= 155_000, 'each page must be slow enough to read');
+        const positions = reading.scrolls.filter(v => v.page.endsWith('/' + (page + 1)));
+        assert.ok(positions.some(v => v.to > v.from), 'must scroll downward');
+        assert.ok(positions.some(v => v.to < v.from), 'must scroll upward');
+        assert.equal(Math.max(...positions.map(v => v.to)), 800, 'must reach the bottom');
         assert.equal(positions.at(-1).to, 0, 'must return to the top');
     }
-    assert.ok(reading.scrolls.length > 10);
+    assert.ok(reading.scrolls.length > 20);
 });
 
-test('a long article still completes its full-page pass in sixty-two seconds', async () => {
+test('long article takes proportionally longer instead of scrolling faster', async () => {
     const reading = reader(900);
-    reading.content.scrollHeight = 18_000;
+    reading.content.scrollHeight = 18_000; // 17,200 scrollable pixels
     for (let i = 0; i < 3; i++) assert.equal((await reading.run()).reading, true);
     assert.equal(reading.clicks.length, 0);
-    const result = await finish(reading, true, 63_000);
+    const result = await finish(reading, true, 475_000);
     assert.equal(result.clickedUrl, 'https://reading.test/article/2');
-    assert.ok(reading.clicks[0].at >= 62_000 && reading.clicks[0].at < 63_000);
-    assert.equal(Math.max(...reading.scrolls.map(s => s.to)), 17_200);
+    assert.ok(reading.clicks[0].at >= 445_000, 'a long page needs extra reading time');
+    assert.equal(Math.max(...reading.scrolls.map(v => v.to)), 17_200);
     assert.equal(reading.scrolls.at(-1).to, 0);
+    const movements = reading.scrolls.filter(v => Math.abs(v.to - v.from) > 1);
+    for (let i = 1; i < movements.length; i++) {
+        const prev = movements[i - 1], current = movements[i];
+        const seconds = (current.at - prev.at) / 1_000;
+        assert.ok(Math.abs(current.to - prev.to) <= seconds * 80 + 1.5,
+            'Keep Alive must never move faster than eighty pixels per second');
+    }
 });
 
-test('scroll-only Keep Alive reads the page without following an internal link', async () => {
+test('scroll-only Keep Alive reads without following a link', async () => {
     const reading = reader();
     assert.equal((await reading.run(false)).reading, true);
     assert.equal((await reading.run(false)).reading, true);
-    assert.deepEqual(Object.keys(await finish(reading, false, 63_000)), []);
+    assert.deepEqual(Object.keys(await finish(reading, false, 155_000)), []);
     assert.equal(reading.clicks.length, 0);
-    assert.ok(reading.time >= 62_000);
+    assert.ok(reading.time >= 136_000);
 });
 
-test('a stalled navigation cannot cause another link click on the old document', async () => {
+test('a stalled navigation cannot trigger a second click on the old document', async () => {
     const reading = reader(120, false);
-    await reading.run(); await reading.run(); await finish(reading, true, 63_000);
+    await reading.run(); await reading.run(); await finish(reading, true, 155_000);
     reading.advance(1_500);
-    const result = await reading.run();
-    assert.equal(result.reading, true);
+    assert.equal((await reading.run()).reading, true);
     assert.equal(reading.clicks.length, 1);
 });
 
-test('the scroll pass includes page height added by lazy content', async () => {
+test('lazy-loaded sections increase reading time and remain fully visible', async () => {
     const reading = reader();
     await reading.run();
-    reading.content.scrollHeight = 9000;
-    await finish(reading, true, 63_000);
-    assert.equal(Math.max(...reading.scrolls.map(s => s.to)), 8200);
+    reading.content.scrollHeight = 9_000;
+    const result = await finish(reading, true, 260_000);
+    assert.equal(result.clickedUrl, 'https://reading.test/article/2');
+    assert.equal(Math.max(...reading.scrolls.map(v => v.to)), 8_200);
     assert.equal(reading.scrolls.at(-1).to, 0);
-    assert.ok(reading.clicks[0].at >= 62_000 && reading.clicks[0].at < 63_000);
+    assert.ok(reading.clicks[0].at >= 200_000);
 });
 
-test('a browser starting mid-article covers the top and bottom before its next click', async () => {
+test('mid-article entry restarts gently at the top before the slow pass', async () => {
     const reading = reader();
     reading.window.scrollY = 400;
-    await finish(reading, true, 63_000);
+    await finish(reading, true, 155_000);
     assert.equal(reading.clicks.length, 1);
     assert.equal(reading.scrolls[0].to, 0);
-    assert.equal(Math.max(...reading.scrolls.map(s => s.to)), 800);
+    assert.equal(Math.max(...reading.scrolls.map(v => v.to)), 800);
     assert.equal(reading.scrolls.at(-1).to, 0);
 });
 
-test('article reading moves gently and takes two-second breaks at each third', async () => {
+test('reading pauses for at least three seconds at each third on both passes', async () => {
     const reading = reader();
-    const completed = await finish(reading, false, 63_000);
-    assert.deepEqual(Object.keys(completed), []);
+    const result = await finish(reading, false, 155_000);
+    assert.deepEqual(Object.keys(result), []);
     const positions = reading.scrolls;
-    const atEightSeconds = positions.find((entry) => entry.at === 8_000);
-    assert.ok(atEightSeconds, 'the downwards reading pass should be moving at eight seconds');
-    assert.ok(Math.abs(atEightSeconds.to - 200) < 1, 'at eight seconds the scroll should cover only one quarter of the page');
-    for (const [start, end, expected] of [
-        [10_000, 12_000, 800 / 3],
-        [20_000, 22_000, 1600 / 3],
-        [40_000, 42_000, 1600 / 3],
-        [50_000, 52_000, 800 / 3]
+    for (const [checkpoint, label] of [
+        [800 / 3, 'one-third'], [1_600 / 3, 'two-thirds']
     ]) {
-        const previous = positions.filter((entry) => entry.at <= start).at(-1);
-        assert.ok(previous && Math.abs(previous.to - expected) < 1,
-            `the reader must reach the correct position before the break at ${start} ms`);
-        assert.equal(positions.filter((entry) => entry.at > start && entry.at < end).length, 0,
-            `the reader must not move during the break from ${start} to ${end} ms`);
+        const stops = positions.filter(v => Math.abs(v.to - checkpoint) < 0.15);
+        assert.equal(stops.length, 2, label + ' should be visited once on each direction');
+        for (const stop of stops) {
+            const later = positions.find(v => v.at > stop.at);
+            assert.ok(later && later.at - stop.at >= 3_000,
+                label + ' reading break must last at least three seconds');
+        }
     }
-    assert.equal(reading.time, 62_000);
+    assert.ok(reading.time >= 136_000);
 });
+
+test('a throttled timer never causes a sudden large jump when scrolling resumes', async () => {
+    const reading = reader();
+    await reading.run();
+    const before = reading.scrolls.at(-1);
+    reading.advance(50_000);
+    await reading.run();
+    const after = reading.scrolls.find(v => v.at > before.at);
+    if (after && Math.abs(after.to - before.to) > 1)
+        assert.ok(Math.abs(after.to - before.to) <= 18,
+            'an inactive browser cannot catch up with a large jump');
+});
+
 test('an unfinished reading chunk stays enabled even with the manual one-page limit', async () => {
     const electron = fakeElectron();
     const { BrowserManager: Manager } = loadTree(path.resolve(__dirname, '../src'), electron)('main/BrowserManager.js');
