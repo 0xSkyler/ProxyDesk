@@ -1,8 +1,8 @@
 {
   "name": "dom",
   "productName": "DOM",
-  "version": "0.5.22",
-  "description": "DOM v0.5.22, simultaneous multi-keyword desktop application",
+  "version": "0.5.23",
+  "description": "DOM v0.5.23, simultaneous multi-keyword desktop application",
   "author": "DOM",
   "license": "MIT",
   "private": true,
@@ -65,6 +65,6 @@
       "shortcutName": "DOM"
     }
   },
-  "linuxRelease": "v0.5.22",
-  "windowsRelease": "v0.5.22"
+  "linuxRelease": "v0.5.23",
+  "windowsRelease": "v0.5.23"
 }
