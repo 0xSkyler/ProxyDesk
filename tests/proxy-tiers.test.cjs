@@ -170,32 +170,74 @@ test('automation manager carries the user choice into the source request', async
     assert.equal(automation.getState().proxyTier,'tier3');
 });
 
-test('selected tiers do not use prior connection or CAPTCHA health to choose proxies', async () => {
+test('tier selection retains proven successful proxies and only replaces unsuccessful or out-of-tier slots', async () => {
     const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
-    const events = []; let requested = null;
+    const events = [], requests = [];
+    const existing = new Map([
+        [1, { proxy: { id:'old-1', host:'192.0.2.11', port:8080, countryCode:'PL' },
+            targetOpened:true, captchaSeen:false, failed:false }],
+        [2, { proxy: { id:'old-2', host:'192.0.2.12', port:8080, countryCode:'PL' },
+            targetOpened:false, captchaSeen:false, failed:false }],
+        [3, { proxy: { id:'old-3', host:'192.0.2.13', port:8080, countryCode:'US' },
+            targetOpened:true, captchaSeen:false, failed:false }]
+    ]);
     const browser = {
-        getProxyRotationState() { throw new Error('Tier selection must not consult previous proxy health'); },
+        getProxyRotationState: id => existing.get(id),
+        beginProxyCycle: id => events.push(['retain', id]),
         cancelMeasurementSession() {}, setBrowserKeepAlive() {}, prepareCycleDocument: async () => {},
-        assignProxy: async (id, proxy) => events.push([id, proxy?.host || null]),
+        assignProxy: async (id, proxy) => events.push(['assign', id, proxy?.id || null]),
         startMeasurementSession: () => 1
     };
     const proxyManager = {
         fetchAssignDirect: async (ids, assign, _progress, options) => {
-            requested = options;
-            ids.forEach((id, index) => assign({ browserId: id,
-                proxy: { id: String(id), host: '192.0.2.' + (70 + index), port: 8080, countryCode: 'PL' } }));
+            requests.push({ ids: [...ids], options });
+            ids.forEach(id => assign({ browserId:id,
+                proxy: { id:'new-' + id, host:'192.0.2.' + (70 + id), port:8080, countryCode:'PL' } }));
         }
     };
     const automation = new SeoAutomationManager(proxyManager, browser, async () => []);
-    automation.configureProxy({ source: 'proxyscrape-free', tier: 'tier2' });
-    automation.state = { ...automation.state, running:true, cycleNumber:1, browserIds:[1,2],
+    automation.configureProxy({ source:'proxyscrape-free', tier:'tier2' });
+    automation.state = { ...automation.state, running:true, cycleNumber:1, browserIds:[1,2,3],
         query:'example topic', targetWebsite:'fixture.test' };
     automation.monitorBrowserSession = async () => {};
     await automation.runCycle();
-    assert.equal(requested.tier, 'tier2');
-    assert.equal(requested.retainedAssignments.length, 0);
-    assert.equal(requested.failedProxies.length, 0);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].options.tier, 'tier2');
+    assert.deepEqual(requests[0].ids, [2,3], 'only unsuccessful/out-of-tier slots get new proxies');
+    assert.deepEqual(requests[0].options.retainedAssignments.map(a => a.browserId), [1]);
+    assert.deepEqual(requests[0].options.failedProxies.map(p => p.id), ['old-2'],
+        'an out-of-tier address is not treated as an in-tier failed candidate');
     assert.deepEqual(events, [
-        [1, null], [2, null], [1, '192.0.2.70'], [2, '192.0.2.71']
+        ['assign', 2, null], ['assign', 3, null],
+        ['retain', 1], ['assign', 2, 'new-2'], ['assign', 3, 'new-3']
     ]);
+    assert.equal(automation.getState().retainedBrowsers, 1);
+    assert.equal(automation.getState().replacedBrowsers, 0, 'test provider did not publish progress');
+    assert.equal(automation.getState().lastError, undefined);
+});
+
+test('an all-successful tier cycle retains proxies without fetching new ones', async () => {
+    const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
+    const events = [];
+    const browser = {
+        getProxyRotationState: id => ({ proxy: { id:'retained-'+id,
+            host:'192.0.2.'+id, port:8080, countryCode:'BD' },
+            targetOpened:true, captchaSeen:false, failed:false }),
+        beginProxyCycle: id => events.push(['retain',id]),
+        cancelMeasurementSession() {}, setBrowserKeepAlive() {}, prepareCycleDocument: async () => {},
+        assignProxy: async () => { throw new Error('successful proxy routing must remain unchanged'); },
+        startMeasurementSession: () => 1
+    };
+    const provider = { fetchAssignDirect: async () => {
+        throw new Error('no API fetch is necessary for fully retained browsers');
+    } };
+    const automation = new SeoAutomationManager(provider, browser, async () => []);
+    automation.configureProxy({ source:'proxyscrape-free', tier:'tier3' });
+    automation.state = { ...automation.state, running:true, cycleNumber:1, browserIds:[1,2],
+        query:'first,second', targetWebsite:'fixture.test' };
+    automation.monitorBrowserSession = async () => {};
+    await automation.runCycle();
+    assert.deepEqual(events, [['retain',1], ['retain',2]]);
+    assert.equal(automation.getState().retainedBrowsers, 2);
+    assert.equal(automation.getState().lastError, undefined);
 });
