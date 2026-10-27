@@ -11,7 +11,7 @@ const SOURCE_DEFAULTS = Object.freeze({
 const TIER_LABELS = Object.freeze({
     tier1: 'Tier 1 · 25 countries',
     tier2: 'Tier 2 · 22 countries',
-    tier3: 'Tier 3 · 26 countries'
+    tier3: 'Tier 3 · All remaining / unknown countries'
 });
 document.documentElement.dataset.domProviderControls = 'loaded';
 
@@ -42,7 +42,7 @@ function clearError() {
 function updateSourceCopy(label) {
     const description = document.querySelector('.seo-tracker__title p');
     if (description) {
-        const text = 'Select a country tier → use provider country metadata → direct proxy assignment (no preflight checks) → browsing.';
+        const text = 'Tier 1/2 use provider country labels; Tier 3 includes all others, including unknown. Direct assignment without proxy preflight checks.';
         if (description.textContent !== text)
             description.textContent = text;
     }
@@ -172,7 +172,11 @@ async function mount() {
         tierSelect.append(option);
     }
     tierSelect.value = 'tier1';
-    tierSelect.addEventListener('change', clearError);
+    tierSelect.addEventListener('change', () => {
+        if (sourceSelect.value === 'all-working' && tierSelect.value !== 'tier3')
+            showError('Tier 1/2 require country-labeled JSON. The All Working text feed can be used as unclassified Tier 3 proxies.');
+        else clearError();
+    });
 
     endpointInput = document.createElement('input');
     endpointInput.type = 'url';
@@ -190,8 +194,8 @@ async function mount() {
             proxyApiUrl: endpointInput.value
         };
         updateSourceCopy(SOURCE_DEFAULTS[sourceSelect.value].label);
-        if (sourceSelect.value === 'all-working')
-            showError('The default All Working TXT feed has no country codes. For tier routing, use ProxyScrape or a country-labeled JSON endpoint.');
+        if (sourceSelect.value === 'all-working' && tierSelect.value !== 'tier3')
+            showError('Tier 1/2 require country-labeled JSON. The All Working text feed can be used as unclassified Tier 3 proxies.');
         else clearError();
     });
     endpointInput.addEventListener('input', clearError);

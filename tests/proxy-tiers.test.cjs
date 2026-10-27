@@ -15,13 +15,13 @@ function data() {
         { protocol: 'http', ip: '192.0.2.31', port: 8031, country_code: 'BD', country: 'Bangladesh' },
         { protocol: 'http', ip: '192.0.2.32', port: 8032, country_code: 'NG', country: 'Nigeria' },
         { protocol: 'http', ip: '192.0.2.33', port: 8033, country_code: 'IN', country: 'India' },
-        { protocol: 'http', ip: '192.0.2.99', port: 8099 }, // Unknown country must never be assigned.
-        { protocol: 'http', ip: '192.0.2.34', port: 8034, country_code: 'ZZ' }, // Out of all tiers.
+        { protocol: 'http', ip: '192.0.2.99', port: 8099 }, // No country metadata: Tier 3.
+        { protocol: 'http', ip: '192.0.2.34', port: 8034, country_code: 'ZZ' }, // Unknown label: Tier 3.
         { protocol: 'http', ip: '192.0.2.11', port: 8011, country_code: 'US' } // Duplicate address.
     ];
 }
 
-test('all supplied countries are represented once in the exact three tiers', () => {
+test('Tier 1 and 2 are fixed and Tier 3 contains all remaining countries', () => {
     const { PROXY_TIERS, resolveProxyTier, matchesProxyTier } = loadTree(root, {})('proxy/ProxyTiers.js');
     assert.deepEqual(Object.keys(PROXY_TIERS), ['tier1','tier2','tier3']);
     assert.deepEqual(Object.values(PROXY_TIERS).map(v => Object.keys(v.countries).length), [25,22,26]);
@@ -34,6 +34,12 @@ test('all supplied countries are represented once in the exact three tiers', () 
     assert.equal(matchesProxyTier('BD', 'tier3'), true);
     assert.equal(matchesProxyTier('NG', 'tier1'), false);
     assert.equal(matchesProxyTier('', 'tier2'), false);
+    assert.equal(matchesProxyTier('US', 'tier3'), false);
+    assert.equal(matchesProxyTier('PL', 'tier3'), false);
+    assert.equal(matchesProxyTier('BD', 'tier3'), true);
+    assert.equal(matchesProxyTier('IS', 'tier3'), true); // Iceland was never listed.
+    assert.equal(matchesProxyTier('ZZ', 'tier3'), true); // Unknown provider country label.
+    assert.equal(matchesProxyTier('', 'tier3'), true); // Missing provider country label.
 });
 
 test('country JSON classification uses provider metadata without independent geolocation', () => {
@@ -41,10 +47,10 @@ test('country JSON classification uses provider metadata without independent geo
     const feed = JSON.stringify({ data: { proxies: data() } });
     const parsed = parseGeoProxyFeed(feed, 'fixture');
     assert.equal(parsed.totalRecords, 10);
-    assert.equal(parsed.proxies.length, 9, 'unknown-country records are skipped');
+    assert.equal(parsed.proxies.length, 10, 'all valid records, including unknown country, remain available');
     assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier1')).length, 3);
     assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier2')).length, 2);
-    assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier3')).length, 3);
+    assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier3')).length, 5);
     assert.ok(parsed.proxies.every(p => p.countryVerified === false));
     const byName = parseGeoProxyFeed(JSON.stringify([
         { protocol: 'http', ip: '192.0.2.80', port: 8180, country: 'South Korea' },
@@ -65,10 +71,10 @@ test('each tier directly assigns only matching proxies with zero preflight reque
     for (const [tier, expected] of [
         ['tier1', ['US', 'DE']],
         ['tier2', ['PL', 'ZA']],
-        ['tier3', ['BD', 'NG', 'IN']]
+        ['tier3', ['BD', 'NG', 'IN', '', 'ZZ']]
     ]) {
         const manager = new ProxyManager(), assigned = [];
-        const summary = await manager.fetchAssignDirect([1, 2, 3], a => assigned.push(a), undefined,
+        const summary = await manager.fetchAssignDirect([1, 2, 3, 4, 5, 6], a => assigned.push(a), undefined,
             { source: 'proxyscrape-free', tier });
         assert.equal(summary.tier, tier);
         assert.deepEqual(assigned.map(a => a.proxy.countryCode), expected);
@@ -80,28 +86,43 @@ test('each tier directly assigns only matching proxies with zero preflight reque
     }
 });
 
-test('source metadata missing or no matching country cannot fall back to arbitrary proxies', async () => {
+test('missing country metadata is excluded from Tier 1/2 but included in Tier 3', async () => {
     const noCountry = JSON.stringify([{ protocol: 'http', ip: '192.0.2.1', port: 8080 }]);
     const { ProxyManager } = loadTree(root, {}, {
         fetch: async () => ({ ok: true, text: async () => noCountry })
     })('main/ProxyManager.js');
     const manager = new ProxyManager(), assigned = [];
-    await assert.rejects(manager.fetchAssignDirect([1], a => assigned.push(a), undefined,
-        { source: 'proxyscrape-free', tier: 'tier3' }), /no proxies labeled/);
-    assert.equal(assigned.length, 0);
+    for (const tier of ['tier1', 'tier2']) {
+        await assert.rejects(manager.fetchAssignDirect([1], a => assigned.push(a), undefined,
+            { source: 'proxyscrape-free', tier }), /no assignable entries/);
+        assert.equal(assigned.length, 0);
+    }
+    const summary = await manager.fetchAssignDirect([1], a => assigned.push(a), undefined,
+        { source: 'proxyscrape-free', tier: 'tier3' });
+    assert.equal(summary.countryMatched, 1);
+    assert.equal(assigned[0].proxy.countryCode, '');
+    assert.equal(assigned[0].proxy.countryVerified, false);
 });
 
-test('text-only All Working source remains available in legacy mode but cannot claim a tier', async () => {
+test('text-only All Working source works in Tier 3 as unclassified leftovers', async () => {
     const { ProxyManager } = loadTree(root, {}, {
         fetch: async () => ({ ok: true, text: async () => 'http://192.0.2.1:8080' })
     })('main/ProxyManager.js');
     const manager = new ProxyManager(), selected = [];
-    await assert.rejects(manager.fetchAssignDirect([1], a => selected.push(a), undefined,
-        { source: 'all-working', tier: 'tier1' }), /country-labeled JSON/);
+    for (const tier of ['tier1', 'tier2']) {
+        await assert.rejects(manager.fetchAssignDirect([1], a => selected.push(a), undefined,
+            { source: 'all-working', tier }), /country-labeled JSON/);
+    }
     assert.equal(selected.length, 0);
-    const legacy = await manager.fetchAssignDirect([1], a => selected.push(a), undefined, { source: 'all-working' });
+    const tier3 = await manager.fetchAssignDirect([1], a => selected.push(a), undefined,
+        { source: 'all-working', tier: 'tier3' });
+    assert.equal(tier3.countryMatched, 1);
+    assert.equal(selected[0].proxy.countryCode, '');
+    assert.equal(selected[0].proxy.countryVerified, false);
+    const legacy = await manager.fetchAssignDirect([1], a => selected.push(a), undefined,
+        { source: 'all-working' });
     assert.equal(legacy.assignments.length, 1);
-    assert.equal(selected.length, 1);
+    assert.equal(selected.length, 2);
 });
 
 test('retained assignments cannot escape a newly selected tier', async () => {
@@ -123,6 +144,7 @@ test('UI has exactly three country tiers and passes the selected tier to automat
     const metadata = JSON.stringify(['tier1','tier2','tier3']);
     assert.ok(ui.includes('data-dom-proxy-tier') || ui.includes('domProxyTier'));
     assert.ok(ui.includes("tier: tierSelect.value"));
+    assert.ok(ui.includes('All remaining / unknown countries'));
     for (const tier of JSON.parse(metadata)) assert.ok(ui.includes(tier));
 });
 
