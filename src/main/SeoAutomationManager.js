@@ -43,7 +43,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         proxySource: DEFAULT_PROXY_SOURCE.id,
         proxySourceLabel: DEFAULT_PROXY_SOURCE.label,
         proxyApiUrl: DEFAULT_PROXY_SOURCE.endpoint,
-        proxyTier: "tier1",
+        proxyTier: null, // Legacy direct API callers without the UI remain unchanged.
         query: '',
         targetWebsite: '',
         intervalSec: 600,
@@ -75,7 +75,8 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         if (this.state.running)
             throw new Error('Stop SEO Tracker before changing the proxy source.');
         const source = (0, ProxyManager_1.resolveProxySource)(config?.source, config?.endpoint);
-        const tier = (0, ProxyTiers_1.resolveProxyTier)(config?.tier ?? this.state.proxyTier);
+        const requestedTier = config?.tier ?? this.state.proxyTier;
+        const tier = requestedTier == null ? null : (0, ProxyTiers_1.resolveProxyTier)(requestedTier);
         this.state = {
             ...this.state,
             proxySource: source.id,
@@ -107,7 +108,8 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const maxPages = (0, automation_1.normalizeSeoMaxPages)(config.maxPages);
         const intervalSec = (0, automation_1.normalizeAutomationIntervalSeconds)(config.intervalSec);
         const proxySource = (0, ProxyManager_1.resolveProxySource)(config.proxySource ?? this.state.proxySource, config.proxyApiUrl ?? this.state.proxyApiUrl);
-        const proxyTier = (0, ProxyTiers_1.resolveProxyTier)(config.proxyTier ?? this.state.proxyTier);
+        const requestedTier = config.proxyTier ?? this.state.proxyTier;
+        const proxyTier = requestedTier == null ? null : (0, ProxyTiers_1.resolveProxyTier)(requestedTier);
         if (keywords.length > browserCount) {
             throw new Error(`Select at least ${keywords.length} browsers to run all keywords at the same time.`);
         }
