@@ -38,6 +38,7 @@
       "src/proxy/AllWorkingProxyProvider.js",
       "src/proxy/ProxyScrapeProvider.js",
       "src/proxy/ProxyParser.js",
+      "src/proxy/ProxyTiers.js",
       "third-party/**/*",
       "package.json"
     ],
