@@ -92,7 +92,8 @@ class ProxyManager extends node_events_1.EventEmitter {
                 : parsed.proxies;
             if (tier && countryMatched.length === 0)
                 throw new Error(`${source.label} returned no proxies labeled with countries in ${ProxyTiers_1.PROXY_TIERS[tier].label}. No other-tier proxies will be assigned.`);
-            const retained = sourceOptions.retainedAssignments || [];
+            const retained = (sourceOptions.retainedAssignments || []).filter(
+                assignment => !tier || (0, ProxyTiers_1.matchesProxyTier)(assignment.proxy?.countryCode, tier));
             const endpointOf = proxy => `${proxy.host.toLowerCase()}:${proxy.port}`;
             const excluded = new Set([
                 ...retained.map(assignment => endpointOf(assignment.proxy)),
