@@ -190,7 +190,9 @@ async function mount() {
             proxyApiUrl: endpointInput.value
         };
         updateSourceCopy(SOURCE_DEFAULTS[sourceSelect.value].label);
-        clearError();
+        if (sourceSelect.value === 'all-working')
+            showError('The default All Working TXT feed has no country codes. For tier routing, use ProxyScrape or a country-labeled JSON endpoint.');
+        else clearError();
     });
     endpointInput.addEventListener('input', clearError);
 
