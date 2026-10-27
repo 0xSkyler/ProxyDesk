@@ -109,8 +109,8 @@ class ProxyManager extends node_events_1.EventEmitter {
             if (tier && countryMatched.length === 0) {
                 // Counts describe parsed provider records, not validated
                 // proxy connections. Never silently switch tiers.
-                this.emit('reloadProgress', { checked: 0, total: parsed.proxies.length });
-                onProgress?.(0, parsed.proxies.length, 0, 0, parsed.proxies.length);
+                this.emit('reloadProgress', { checked: parsed.proxies.length, total: parsed.proxies.length });
+                onProgress?.(parsed.proxies.length, parsed.proxies.length, 0, 0, parsed.proxies.length);
                 throw new Error(`${source.label} returned ${parsed.proxies.length} parsed proxies, but none were labeled for ${ProxyTiers_1.PROXY_TIERS[tier].label}. No proxy was assigned outside the selected tier.`);
             }
             const retained = (sourceOptions.retainedAssignments || []).filter(
@@ -149,8 +149,9 @@ class ProxyManager extends node_events_1.EventEmitter {
             for (const assignment of retained) this.allProxies.set(assignment.proxy.id, assignment.proxy);
             const assignedCount = Math.min(browserIds.length, orderedProxies.length);
             const total = parsed.proxies.length;
-            // 'checked' never means a live proxy connectivity or location test.
-            const checked = tier ? 0 : total;
+            // This is the number of feed entries parsed, NOT the number of
+            // proxies checked for connectivity, latency or geolocation.
+            const checked = total;
             this.emit('reloadProgress', { checked, total });
             onProgress?.(checked, total, orderedProxies.length, assignedCount, total);
             for (let index = 0; index < assignedCount; index += 1) {
