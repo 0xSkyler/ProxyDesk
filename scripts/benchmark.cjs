@@ -43,7 +43,13 @@ function processStart(pid) {
     try {
         const proxies = [];
         for (let i = 0; i < count; i++) proxies.push(`http://127.0.0.1:${await server(fixture)}`);
-        const fixturePort = await server((req, res) => req.url === '/proxies' ? res.end(proxies.join('\n')) : fixture(req, res));
+        const countryFeed = proxies.map(value => {
+            const proxy = new URL(value);
+            return { protocol: proxy.protocol.slice(0, -1), ip: proxy.hostname,
+                port: Number(proxy.port), country_code: 'US', country: 'United States' };
+        });
+        const fixturePort = await server((req, res) => req.url === '/proxies'
+            ? res.end(JSON.stringify(countryFeed)) : fixture(req, res));
         const resources = path.join(temporary, 'resources'); await fsp.mkdir(resources);
         // Test runtime is a copy; installed distribution and source remain untouched.
         for (const entry of await fsp.readdir(runtime, { withFileTypes: true })) {
