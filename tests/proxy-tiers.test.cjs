@@ -204,8 +204,8 @@ test('tier selection retains proven successful proxies and only replaces unsucce
     assert.equal(requests.length, 1);
     assert.equal(requests[0].options.tier, 'tier2');
     assert.deepEqual(requests[0].ids, [2,3], 'only unsuccessful/out-of-tier slots get new proxies');
-    assert.deepEqual(requests[0].options.retainedAssignments.map(a => a.browserId), [1]);
-    assert.deepEqual(requests[0].options.failedProxies.map(p => p.id), ['old-2'],
+    assert.deepEqual(Array.from(requests[0].options.retainedAssignments, a => a.browserId), [1]);
+    assert.deepEqual(Array.from(requests[0].options.failedProxies, p => p.id), ['old-2'],
         'an out-of-tier address is not treated as an in-tier failed candidate');
     assert.deepEqual(events, [
         ['assign', 2, null], ['assign', 3, null],
