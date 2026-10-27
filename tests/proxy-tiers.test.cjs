@@ -50,7 +50,7 @@ test('country JSON classification uses provider metadata without independent geo
         { protocol: 'http', ip: '192.0.2.80', port: 8180, country: 'South Korea' },
         { protocol: 'http', ip: '192.0.2.81', port: 8181, country: 'PH' }
     ]), 'fixture').proxies;
-    assert.deepEqual(byName.map(p => p.countryCode), ['KR', 'PH']);
+    assert.deepEqual(Array.from(byName, p => p.countryCode), ['KR', 'PH']);
     assert.throws(() => parseGeoProxyFeed('http://192.0.2.1:8080', 'text-only'), /country-labeled JSON/);
 });
 
