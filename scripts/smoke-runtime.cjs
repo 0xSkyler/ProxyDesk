@@ -43,6 +43,14 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
             }))));
             throw error;
         });
+        const tier = page.getByLabel('Proxy country tier', { exact: true });
+        await tier.waitFor();
+        assert.equal(await tier.inputValue(), 'tier1');
+        assert.deepEqual(await tier.locator('option').evaluateAll(items => items.map(item => item.value)),
+            ['tier1', 'tier2', 'tier3']);
+        await tier.selectOption('tier3');
+        assert.equal(await tier.inputValue(), 'tier3');
+        await tier.selectOption('tier1');
         assert.equal(await source.inputValue(), 'proxyscrape-free');
         assert.match(await endpoint.inputValue(), /^https:\/\/api\.proxyscrape\.com\//);
         await source.selectOption('all-working');
@@ -60,7 +68,15 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
                 response.writeHead(503); response.end('Local proxy fixture');
             })}`);
         }
-        const providerPort = await serve((_request, response) => response.end(proxies.join('\n')));
+        const countryFeed = proxies.map(value => {
+            const proxy = new URL(value);
+            return { protocol: proxy.protocol.slice(0, -1), ip: proxy.hostname,
+                port: Number(proxy.port), country_code: 'US', country: 'United States' };
+        });
+        const providerPort = await serve((_request, response) => {
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify(countryFeed));
+        });
         await endpoint.fill(`http://127.0.0.1:${providerPort}/proxies`);
         await page.locator('.tracker-controls label').filter({ hasText: 'Keywords' }).locator('input').fill('fixture keyword');
         await page.getByLabel('Target website', { exact: true }).fill('fixture.local');

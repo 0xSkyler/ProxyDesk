@@ -1,0 +1,179 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { loadTree } = require('./helpers.cjs');
+const root = path.resolve(__dirname, '../src');
+
+function data() {
+    return [
+        { protocol: 'http', ip: '192.0.2.11', port: 8011, country_code: 'US', country: 'United States' },
+        { protocol: 'socks5', ip: '192.0.2.12', port: 1080, country_code: 'DE', country: 'Germany' },
+        { protocol: 'socks4', ip: '192.0.2.21', port: 1080, country_code: 'PL', country: 'Poland' },
+        { protocol: 'http', ip: '192.0.2.22', port: 8022, country_code: 'ZA', country: 'South Africa' },
+        { protocol: 'http', ip: '192.0.2.31', port: 8031, country_code: 'BD', country: 'Bangladesh' },
+        { protocol: 'http', ip: '192.0.2.32', port: 8032, country_code: 'NG', country: 'Nigeria' },
+        { protocol: 'http', ip: '192.0.2.33', port: 8033, country_code: 'IN', country: 'India' },
+        { protocol: 'http', ip: '192.0.2.99', port: 8099 }, // Unknown country must never be assigned.
+        { protocol: 'http', ip: '192.0.2.34', port: 8034, country_code: 'ZZ' }, // Out of all tiers.
+        { protocol: 'http', ip: '192.0.2.11', port: 8011, country_code: 'US' } // Duplicate address.
+    ];
+}
+
+test('all supplied countries are represented once in the exact three tiers', () => {
+    const { PROXY_TIERS, resolveProxyTier, matchesProxyTier } = loadTree(root, {})('proxy/ProxyTiers.js');
+    assert.deepEqual(Object.keys(PROXY_TIERS), ['tier1','tier2','tier3']);
+    assert.deepEqual(Object.values(PROXY_TIERS).map(v => Object.keys(v.countries).length), [25,22,26]);
+    const total = Object.values(PROXY_TIERS).flatMap(v => Object.keys(v.countries));
+    assert.equal(new Set(total).size, 73, 'countries may not appear in multiple tiers');
+    assert.equal(resolveProxyTier(), 'tier1');
+    assert.equal(resolveProxyTier('tier2'), 'tier2');
+    assert.throws(() => resolveProxyTier('tier4'), /Unknown proxy tier/);
+    assert.equal(matchesProxyTier('US', 'tier1'), true);
+    assert.equal(matchesProxyTier('BD', 'tier3'), true);
+    assert.equal(matchesProxyTier('NG', 'tier1'), false);
+    assert.equal(matchesProxyTier('', 'tier2'), false);
+});
+
+test('country JSON classification uses provider metadata without independent geolocation', () => {
+    const { parseGeoProxyFeed, matchesProxyTier } = loadTree(root, {})('proxy/ProxyTiers.js');
+    const feed = JSON.stringify({ data: { proxies: data() } });
+    const parsed = parseGeoProxyFeed(feed, 'fixture');
+    assert.equal(parsed.totalRecords, 10);
+    assert.equal(parsed.proxies.length, 9, 'unknown-country records are skipped');
+    assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier1')).length, 3);
+    assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier2')).length, 2);
+    assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier3')).length, 3);
+    assert.ok(parsed.proxies.every(p => p.countryVerified === false));
+    const byName = parseGeoProxyFeed(JSON.stringify([
+        { protocol: 'http', ip: '192.0.2.80', port: 8180, country: 'South Korea' },
+        { protocol: 'http', ip: '192.0.2.81', port: 8181, country: 'PH' }
+    ]), 'fixture').proxies;
+    assert.deepEqual(Array.from(byName, p => p.countryCode), ['KR', 'PH']);
+    assert.throws(() => parseGeoProxyFeed('http://192.0.2.1:8080', 'text-only'), /country-labeled JSON/);
+});
+
+test('each tier directly assigns only matching proxies with zero preflight requests', async () => {
+    const { ProxyManager } = loadTree(root, {}, {
+        fetch: async url => {
+            calls.push(String(url));
+            return { ok: true, text: async () => JSON.stringify(data()) };
+        }
+    })('main/ProxyManager.js');
+    const calls = [];
+    for (const [tier, expected] of [
+        ['tier1', ['US', 'DE']],
+        ['tier2', ['PL', 'ZA']],
+        ['tier3', ['BD', 'NG', 'IN']]
+    ]) {
+        const manager = new ProxyManager(), assigned = [];
+        const summary = await manager.fetchAssignDirect([1, 2, 3], a => assigned.push(a), undefined,
+            { source: 'proxyscrape-free', tier });
+        assert.equal(summary.tier, tier);
+        assert.deepEqual(assigned.map(a => a.proxy.countryCode), expected);
+        assert.equal(summary.countryMatched, tier === 'tier1' ? 3 : expected.length);
+        assert.equal(summary.assignments[expected.length]?.proxy ?? null, null);
+        assert.equal(calls.length, ['tier1','tier2','tier3'].indexOf(tier) + 1, 'one provider request per tier, no proxy probes');
+        assert.equal(new URL(calls.at(-1)).searchParams.get('format'), 'json', 'API request asks for country-labeled records');
+        assert.ok(assigned.every(a => a.proxy.countryVerified === false));
+    }
+});
+
+test('source metadata missing or no matching country cannot fall back to arbitrary proxies', async () => {
+    const noCountry = JSON.stringify([{ protocol: 'http', ip: '192.0.2.1', port: 8080 }]);
+    const { ProxyManager } = loadTree(root, {}, {
+        fetch: async () => ({ ok: true, text: async () => noCountry })
+    })('main/ProxyManager.js');
+    const manager = new ProxyManager(), assigned = [];
+    await assert.rejects(manager.fetchAssignDirect([1], a => assigned.push(a), undefined,
+        { source: 'proxyscrape-free', tier: 'tier3' }), /no proxies labeled/);
+    assert.equal(assigned.length, 0);
+});
+
+test('text-only All Working source remains available in legacy mode but cannot claim a tier', async () => {
+    const { ProxyManager } = loadTree(root, {}, {
+        fetch: async () => ({ ok: true, text: async () => 'http://192.0.2.1:8080' })
+    })('main/ProxyManager.js');
+    const manager = new ProxyManager(), selected = [];
+    await assert.rejects(manager.fetchAssignDirect([1], a => selected.push(a), undefined,
+        { source: 'all-working', tier: 'tier1' }), /country-labeled JSON/);
+    assert.equal(selected.length, 0);
+    const legacy = await manager.fetchAssignDirect([1], a => selected.push(a), undefined, { source: 'all-working' });
+    assert.equal(legacy.assignments.length, 1);
+    assert.equal(selected.length, 1);
+});
+
+test('retained assignments cannot escape a newly selected tier', async () => {
+    const { ProxyManager } = loadTree(root, {}, {
+        fetch: async () => ({ ok: true, text: async () => JSON.stringify(data()) })
+    })('main/ProxyManager.js');
+    const manager = new ProxyManager(), assigned = [];
+    const retained = [{ browserId: 1, proxy: { id:'old', host:'192.0.2.44', port:8080, countryCode:'BD' } }];
+    const summary = await manager.fetchAssignDirect([2], a => assigned.push(a), undefined, {
+        source: 'proxyscrape-free', tier: 'tier1', retainedAssignments: retained
+    });
+    assert.equal(manager.getAssignment(1), null);
+    assert.equal(assigned[0].proxy.countryCode, 'US');
+    assert.equal(summary.assignments.length, 1);
+});
+
+test('UI has exactly three country tiers and passes the selected tier to automation', () => {
+    const ui = fs.readFileSync(path.join(root, 'renderer/provider-controls.js'), 'utf8');
+    const metadata = JSON.stringify(['tier1','tier2','tier3']);
+    assert.ok(ui.includes('data-dom-proxy-tier') || ui.includes('domProxyTier'));
+    assert.ok(ui.includes("tier: tierSelect.value"));
+    for (const tier of JSON.parse(metadata)) assert.ok(ui.includes(tier));
+});
+
+test('automation manager carries the user choice into the source request', async () => {
+    const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
+    let requested = null;
+    const browser = {
+        getProxyRotationState: () => ({ proxy: null }),
+        prepareCycleDocument: async () => {},
+        cancelMeasurementSession() {}, setBrowserKeepAlive() {},
+        assignProxy: async () => {}, startMeasurementSession: () => 1
+    };
+    const proxyManager = {
+        fetchAssignDirect: async (_ids, _onAssignment, _progress, options) => { requested = options; }
+    };
+    const automation = new SeoAutomationManager(proxyManager, browser, async () => []);
+    const state = automation.configureProxy({source:'proxyscrape-free', tier:'tier3'});
+    assert.equal(state.proxyTier, 'tier3');
+    automation.state = { ...automation.state, running:true, cycleNumber:0, browserIds:[1],
+        query:'fabric gsm', targetWebsite:'fixture.test' };
+    await automation.runCycle();
+    assert.equal(requested.tier,'tier3');
+    assert.equal(automation.getState().proxyTier,'tier3');
+});
+
+test('selected tiers do not use prior connection or CAPTCHA health to choose proxies', async () => {
+    const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
+    const events = []; let requested = null;
+    const browser = {
+        getProxyRotationState() { throw new Error('Tier selection must not consult previous proxy health'); },
+        cancelMeasurementSession() {}, setBrowserKeepAlive() {}, prepareCycleDocument: async () => {},
+        assignProxy: async (id, proxy) => events.push([id, proxy?.host || null]),
+        startMeasurementSession: () => 1
+    };
+    const proxyManager = {
+        fetchAssignDirect: async (ids, assign, _progress, options) => {
+            requested = options;
+            ids.forEach((id, index) => assign({ browserId: id,
+                proxy: { id: String(id), host: '192.0.2.' + (70 + index), port: 8080, countryCode: 'PL' } }));
+        }
+    };
+    const automation = new SeoAutomationManager(proxyManager, browser, async () => []);
+    automation.configureProxy({ source: 'proxyscrape-free', tier: 'tier2' });
+    automation.state = { ...automation.state, running:true, cycleNumber:1, browserIds:[1,2],
+        query:'example topic', targetWebsite:'fixture.test' };
+    automation.monitorBrowserSession = async () => {};
+    await automation.runCycle();
+    assert.equal(requested.tier, 'tier2');
+    assert.equal(requested.retainedAssignments.length, 0);
+    assert.equal(requested.failedProxies.length, 0);
+    assert.deepEqual(events, [
+        [1, null], [2, null], [1, '192.0.2.70'], [2, '192.0.2.71']
+    ]);
+});

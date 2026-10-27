@@ -8,10 +8,16 @@ const SOURCE_DEFAULTS = Object.freeze({
         endpoint: 'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text'
     }
 });
+const TIER_LABELS = Object.freeze({
+    tier1: 'Tier 1 · 25 countries',
+    tier2: 'Tier 2 · 22 countries',
+    tier3: 'Tier 3 · 26 countries'
+});
 document.documentElement.dataset.domProviderControls = 'loaded';
 
 let latestState = null;
 let sourceSelect = null;
+let tierSelect = null;
 let endpointInput = null;
 let replayingStart = false;
 let errorElement = null;
@@ -36,7 +42,7 @@ function clearError() {
 function updateSourceCopy(label) {
     const description = document.querySelector('.seo-tracker__title p');
     if (description) {
-        const text = 'Selected proxy API → direct proxy assignment → Google monitoring → challenge pause/resume → exact-host result opening → rotation.';
+        const text = 'Select a country tier → use provider country metadata → direct proxy assignment (no preflight checks) → browsing.';
         if (description.textContent !== text)
             description.textContent = text;
     }
@@ -74,10 +80,14 @@ function applyState(state) {
         sourceSelect.value = source;
     if (endpointInput && document.activeElement !== endpointInput)
         endpointInput.value = state.proxyApiUrl || SOURCE_DEFAULTS[source].endpoint;
+    if (tierSelect && document.activeElement !== tierSelect)
+        tierSelect.value = TIER_LABELS[state.proxyTier] ? state.proxyTier : 'tier1';
     if (sourceSelect)
         sourceSelect.disabled = Boolean(state.running);
     if (endpointInput)
         endpointInput.disabled = Boolean(state.running);
+    if (tierSelect)
+        tierSelect.disabled = Boolean(state.running);
     updateSourceCopy(state.proxySourceLabel || SOURCE_DEFAULTS[source].label);
 }
 
@@ -152,6 +162,18 @@ async function mount() {
         sourceSelect.append(option);
     }
 
+    tierSelect = document.createElement('select');
+    tierSelect.dataset.domProxyTier = 'true';
+    tierSelect.setAttribute('aria-label', 'Proxy country tier');
+    for (const [value, label] of Object.entries(TIER_LABELS)) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        tierSelect.append(option);
+    }
+    tierSelect.value = 'tier1';
+    tierSelect.addEventListener('change', clearError);
+
     endpointInput = document.createElement('input');
     endpointInput.type = 'url';
     endpointInput.setAttribute('aria-label', 'Proxy API URL (editable)');
@@ -168,11 +190,14 @@ async function mount() {
             proxyApiUrl: endpointInput.value
         };
         updateSourceCopy(SOURCE_DEFAULTS[sourceSelect.value].label);
-        clearError();
+        if (sourceSelect.value === 'all-working')
+            showError('The default All Working TXT feed has no country codes. For tier routing, use ProxyScrape or a country-labeled JSON endpoint.');
+        else clearError();
     });
     endpointInput.addEventListener('input', clearError);
 
     controls.prepend(
+        createLabel('Country tier', tierSelect, 'proxy-tier-select'),
         createLabel('Proxy source', sourceSelect),
         createLabel('Proxy API URL (editable)', endpointInput, 'proxy-api-endpoint')
     );
@@ -223,7 +248,8 @@ document.addEventListener('click', async (event) => {
         clearError();
         const state = await window.app.automation.configureProxy({
             source: sourceSelect.value,
-            endpoint: endpointInput.value.trim()
+            endpoint: endpointInput.value.trim(),
+            tier: tierSelect.value
         });
         applyState(state);
         replayingStart = true;
