@@ -271,19 +271,23 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const keywords = parseAutomationKeywords(query);
         const browserQueries = new Map(browserIds.map((browserId, index) =>
             [browserId, keywords[(index + cycleNumber - 1) % keywords.length] ?? query]));
-        // A selected country tier always fetches and assigns directly.
-        // Prior Google results, CAPTCHA flags, and connection outcomes are
-        // never used to pre-validate, score, or choose tier proxies.
-        const directTier = proxyTier != null;
-        const rotationStates = directTier ? new Map() : new Map(browserIds.map(id => [id, this.browserManager.getProxyRotationState(id)]));
-        const retained = !directTier && cycleNumber > 1 ? browserIds.filter(id => {
+        // Retain already-successful proxies for the next cycle, including
+        // when a country tier is selected. Historical success is NOT a live
+        // connectivity, latency, geolocation, or health preflight. Proxies
+        // outside the user's selected tier cannot be retained.
+        const rotationStates = new Map(browserIds.map(id => [id, this.browserManager.getProxyRotationState(id)]));
+        const belongsToSelectedTier = proxy => !proxyTier ||
+            (0, ProxyTiers_1.matchesProxyTier)(proxy.countryCode, proxyTier);
+        const retained = cycleNumber > 1 ? browserIds.filter(id => {
             const health = rotationStates.get(id);
-            return health.proxy && health.targetOpened && !health.captchaSeen && !health.failed;
+            return health.proxy && belongsToSelectedTier(health.proxy) &&
+                health.targetOpened && !health.captchaSeen && !health.failed;
         }).map(browserId => ({ browserId, proxy: rotationStates.get(browserId).proxy, retained: true })) : [];
         const retainedIds = new Set(retained.map(assignment => assignment.browserId));
         const replacementIds = browserIds.filter(id => !retainedIds.has(id));
-        const failedProxies = !directTier && cycleNumber > 1
-            ? replacementIds.map(id => rotationStates.get(id).proxy).filter(Boolean) : [];
+        const failedProxies = cycleNumber > 1
+            ? replacementIds.map(id => rotationStates.get(id).proxy)
+                .filter(proxy => proxy && belongsToSelectedTier(proxy)) : [];
         this.state = {
             ...this.state,
             cycleInProgress: true,
