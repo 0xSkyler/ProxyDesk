@@ -35,7 +35,7 @@ exports.PROXY_TIERS = Object.freeze({
         })
     }),
     tier3: Object.freeze({
-        label: "Tier 3",
+        label: "Tier 3 (all remaining proxies)",
         countries: Object.freeze({
             IN: "India", PK: "Pakistan", BD: "Bangladesh", VN: "Vietnam",
             KH: "Cambodia", LK: "Sri Lanka", NP: "Nepal", LA: "Laos",
@@ -69,14 +69,23 @@ function normalizeCountryCode(code, name) {
     return CODE_BY_NAME.get(String(name || raw).trim().toLowerCase()) || "";
 }
 function matchesProxyTier(countryCode, tierId) {
+    const tier = resolveProxyTier(tierId);
     const code = normalizeCountryCode(countryCode);
-    return Object.hasOwn(exports.PROXY_TIERS[resolveProxyTier(tierId)].countries, code);
+    if (tier === "tier3") {
+        // Tier 3 is the complement of Tier 1 and Tier 2, including
+        // unlisted countries and missing/unknown provider country labels.
+        // Do not run IP lookups or proxy-health checks to classify records.
+        return !Object.hasOwn(exports.PROXY_TIERS.tier1.countries, code) &&
+            !Object.hasOwn(exports.PROXY_TIERS.tier2.countries, code);
+    }
+    return Object.hasOwn(exports.PROXY_TIERS[tier].countries, code);
 }
 
 /**
  * Parses a provider's country-labeled JSON. This is metadata classification,
  * NOT a geolocation lookup, connectivity probe, latency test or verification.
- * A proxy with unknown/missing country cannot be placed in an arbitrary tier.
+ * A proxy with unknown/missing country is unclassified and belongs to
+ * catch-all Tier 3. Provider metadata is never independently verified.
  */
 function parseGeoProxyFeed(text, source) {
     let payload;
@@ -97,7 +106,7 @@ function parseGeoProxyFeed(text, source) {
                 (typeof item.country === "string" ? item.country : ""),
             typeof item.country === "string" ? item.country : item.country?.name
         );
-        if (!code) continue;
+        // Keep proxies lacking metadata: Tier 3 must receive leftovers too.
         const host = item.ip || item.host || item.address;
         const direct = item.proxy || item.url || (
             host && item.port && item.protocol ? String(item.protocol) + "://" + host + ":" + item.port : ""
