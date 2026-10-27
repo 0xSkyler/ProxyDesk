@@ -60,7 +60,15 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
                 response.writeHead(503); response.end('Local proxy fixture');
             })}`);
         }
-        const providerPort = await serve((_request, response) => response.end(proxies.join('\n')));
+        const countryFeed = proxies.map(value => {
+            const proxy = new URL(value);
+            return { protocol: proxy.protocol.slice(0, -1), ip: proxy.hostname,
+                port: Number(proxy.port), country_code: 'US', country: 'United States' };
+        });
+        const providerPort = await serve((_request, response) => {
+            response.writeHead(200, { 'Content-Type': 'application/json' });
+            response.end(JSON.stringify(countryFeed));
+        });
         await endpoint.fill(`http://127.0.0.1:${providerPort}/proxies`);
         await page.locator('.tracker-controls label').filter({ hasText: 'Keywords' }).locator('input').fill('fixture keyword');
         await page.getByLabel('Target website', { exact: true }).fill('fixture.local');
