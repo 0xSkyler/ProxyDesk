@@ -93,7 +93,8 @@ function parseGeoProxyFeed(text, source) {
     for (const item of items) {
         if (!item || typeof item !== "object") continue;
         const code = normalizeCountryCode(
-            item.country_code || item.countryCode || item.iso2 || item.country?.code,
+            item.country_code || item.countryCode || item.iso2 || item.country?.code ||
+                (typeof item.country === "string" ? item.country : ""),
             typeof item.country === "string" ? item.country : item.country?.name
         );
         if (!code) continue;
