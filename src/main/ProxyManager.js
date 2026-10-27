@@ -76,8 +76,15 @@ class ProxyManager extends node_events_1.EventEmitter {
             const requestUrl = new URL(source.endpoint);
             if (tier && source.id === exports.PROXY_SOURCE_IDS.proxyScrapeFree &&
                 requestUrl.hostname === 'api.proxyscrape.com' &&
-                requestUrl.pathname === '/v4/free-proxy-list/get')
+                requestUrl.pathname === '/v4/free-proxy-list/get') {
+                // ProxyScrape v4 serves country-tagged JSON records with
+                // request=get_proxies (display_proxies is the plain-text route).
+                // Use the provider's documented max page size, not the
+                // smaller default subset that may omit selected countries.
+                requestUrl.searchParams.set('request', 'get_proxies');
                 requestUrl.searchParams.set('format', 'json');
+                requestUrl.searchParams.set('limit', '2000');
+            }
             const raw = source.id === exports.PROXY_SOURCE_IDS.allWorking
                 ? await (0, AllWorkingProxyProvider_1.fetchAllWorkingProxyText)(controller.signal, requestUrl.href)
                 : await (0, ProxyScrapeProvider_1.fetchProxyScrapeFreeList)({ signal: controller.signal, endpoint: requestUrl.href });
@@ -99,8 +106,13 @@ class ProxyManager extends node_events_1.EventEmitter {
             const countryMatched = tier
                 ? parsed.proxies.filter(proxy => (0, ProxyTiers_1.matchesProxyTier)(proxy.countryCode, tier))
                 : parsed.proxies;
-            if (tier && countryMatched.length === 0)
-                throw new Error(`${source.label} returned no assignable entries for ${ProxyTiers_1.PROXY_TIERS[tier].label}. Tier 3 includes any valid entries not classified in Tier 1 or Tier 2.`);
+            if (tier && countryMatched.length === 0) {
+                // Counts describe parsed provider records, not validated
+                // proxy connections. Never silently switch tiers.
+                this.emit('reloadProgress', { checked: 0, total: parsed.proxies.length });
+                onProgress?.(0, parsed.proxies.length, 0, 0, parsed.proxies.length);
+                throw new Error(`${source.label} returned ${parsed.proxies.length} parsed proxies, but none were labeled for ${ProxyTiers_1.PROXY_TIERS[tier].label}. No proxy was assigned outside the selected tier.`);
+            }
             const retained = (sourceOptions.retainedAssignments || []).filter(
                 assignment => !tier || (0, ProxyTiers_1.matchesProxyTier)(assignment.proxy?.countryCode, tier));
             const endpointOf = proxy => `${proxy.host.toLowerCase()}:${proxy.port}`;
