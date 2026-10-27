@@ -82,8 +82,60 @@ test('each tier directly assigns only matching proxies with zero preflight reque
         assert.equal(summary.assignments[expected.length]?.proxy ?? null, null);
         assert.equal(calls.length, ['tier1','tier2','tier3'].indexOf(tier) + 1, 'one provider request per tier, no proxy probes');
         assert.equal(new URL(calls.at(-1)).searchParams.get('format'), 'json', 'API request asks for country-labeled records');
+        assert.equal(new URL(calls.at(-1)).searchParams.get('request'), 'get_proxies');
+        assert.equal(new URL(calls.at(-1)).searchParams.get('limit'), '2000');
         assert.ok(assigned.every(a => a.proxy.countryVerified === false));
     }
+});
+
+test('live ProxyScrape v4 nested ip_data.countryCode identifies Tier 1 countries', () => {
+    const { parseGeoProxyFeed, matchesProxyTier } = loadTree(root, {})('proxy/ProxyTiers.js');
+    // Actual v4 get_proxies JSON layout: geography is nested under ip_data.
+    // The CDN mirror flattens it; both layouts must work without IP lookups.
+    const feed = JSON.stringify({ nextpage: false, proxies: [
+        { protocol: 'socks5', ip: '198.51.100.10', port: 1080,
+          ip_data: { country: 'United States', countryCode: 'US' } },
+        { protocol: 'http', ip: '198.51.100.11', port: 8080,
+          ip_data: { country: 'Germany', countryCode: 'DE' } },
+        { protocol: 'http', ip: '198.51.100.12', port: 8080,
+          ip_data: { country: 'Brazil', countryCode: 'BR' } },
+        { protocol: 'http', ip: '198.51.100.13', port: 8080,
+          ip_data: { country: 'India', countryCode: 'IN' } }
+    ] });
+    const parsed = parseGeoProxyFeed(feed, 'proxyscrape-live');
+    assert.equal(parsed.totalRecords, 4);
+    assert.deepEqual(Array.from(parsed.proxies, p => p.countryCode), ['US','DE','BR','IN']);
+    assert.deepEqual(Array.from(parsed.proxies, p => p.country), ['United States','Germany','Brazil','India']);
+    assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier1')).length, 2);
+    assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier2')).length, 1);
+    assert.equal(parsed.proxies.filter(p => matchesProxyTier(p.countryCode, 'tier3')).length, 1);
+    assert.ok(parsed.proxies.every(p => p.countryVerified === false), 'no independent IP verification');
+});
+
+test('Tier 1 directly fills 100 browser slots from nested live JSON with a single provider request', async () => {
+    const countryRecords = Array.from({ length: 125 }, (_, index) => ({
+        protocol: 'socks5', ip: `198.51.${Math.floor(index / 250) + 100}.${index + 1}`,
+        port: 1080, ip_data: { countryCode: index % 2 ? 'US' : 'DE', country: 'United States' }
+    }));
+    const calls = [];
+    const { ProxyManager } = loadTree(root, {}, {
+        fetch: async url => {
+            calls.push(String(url));
+            return { ok: true, text: async () => JSON.stringify({ proxies: countryRecords, nextpage: false }) };
+        }
+    })('main/ProxyManager.js');
+    const ids = Array.from({ length: 100 }, (_, i) => i + 1);
+    const assigned = [];
+    const summary = await new ProxyManager().fetchAssignDirect(ids, a => assigned.push(a), undefined,
+        { source: 'proxyscrape-free', tier: 'tier1' });
+    assert.equal(calls.length, 1, 'fetch provider feed only; do not probe proxies');
+    const url = new URL(calls[0]);
+    assert.equal(url.searchParams.get('request'), 'get_proxies');
+    assert.equal(url.searchParams.get('format'), 'json');
+    assert.equal(url.searchParams.get('limit'), '2000');
+    assert.equal(assigned.length, 100);
+    assert.equal(summary.assignments.filter(a => a.proxy != null).length, 100);
+    assert.ok(assigned.every(a => ['US','DE'].includes(a.proxy.countryCode)));
 });
 
 test('missing country metadata is excluded from Tier 1/2 but included in Tier 3', async () => {
@@ -94,7 +146,7 @@ test('missing country metadata is excluded from Tier 1/2 but included in Tier 3'
     const manager = new ProxyManager(), assigned = [];
     for (const tier of ['tier1', 'tier2']) {
         await assert.rejects(manager.fetchAssignDirect([1], a => assigned.push(a), undefined,
-            { source: 'proxyscrape-free', tier }), /no assignable entries/);
+            { source: 'proxyscrape-free', tier }), /none were labeled/);
         assert.equal(assigned.length, 0);
     }
     const summary = await manager.fetchAssignDirect([1], a => assigned.push(a), undefined,

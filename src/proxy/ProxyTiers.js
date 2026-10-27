@@ -101,10 +101,16 @@ function parseGeoProxyFeed(text, source) {
     const proxies = [], invalidLines = [];
     for (const item of items) {
         if (!item || typeof item !== "object") continue;
+        // ProxyScrape v4 get_proxies stores geography under ip_data.
+        // The official CDN mirror flattens it to country_code/country.
+        // Both are provider metadata only; no independent IP lookup.
+        const ipData = item.ip_data || item.ipData || {};
         const code = normalizeCountryCode(
             item.country_code || item.countryCode || item.iso2 || item.country?.code ||
+                ipData.countryCode || ipData.country_code ||
                 (typeof item.country === "string" ? item.country : ""),
-            typeof item.country === "string" ? item.country : item.country?.name
+            (typeof item.country === "string" ? item.country : item.country?.name) ||
+                ipData.country
         );
         // Keep proxies lacking metadata: Tier 3 must receive leftovers too.
         const host = item.ip || item.host || item.address;
@@ -115,7 +121,8 @@ function parseGeoProxyFeed(text, source) {
         if (!parsed) { invalidLines.push(String(direct || "malformed record")); continue; }
         proxies.push(toProxyRecord(parsed, source, {
             countryCode: code,
-            country: typeof item.country === "string" ? item.country : item.country?.name,
+            country: (typeof item.country === "string" ? item.country : item.country?.name) ||
+                ipData.country,
             countryVerified: false // Declared by the provider; no independent test.
         }));
     }
