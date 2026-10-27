@@ -147,3 +147,33 @@ test('automation manager carries the user choice into the source request', async
     assert.equal(requested.tier,'tier3');
     assert.equal(automation.getState().proxyTier,'tier3');
 });
+
+test('selected tiers do not use prior connection or CAPTCHA health to choose proxies', async () => {
+    const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
+    const events = []; let requested = null;
+    const browser = {
+        getProxyRotationState() { throw new Error('Tier selection must not consult previous proxy health'); },
+        cancelMeasurementSession() {}, setBrowserKeepAlive() {}, prepareCycleDocument: async () => {},
+        assignProxy: async (id, proxy) => events.push([id, proxy?.host || null]),
+        startMeasurementSession: () => 1
+    };
+    const proxyManager = {
+        fetchAssignDirect: async (ids, assign, _progress, options) => {
+            requested = options;
+            ids.forEach((id, index) => assign({ browserId: id,
+                proxy: { id: String(id), host: '192.0.2.' + (70 + index), port: 8080, countryCode: 'PL' } }));
+        }
+    };
+    const automation = new SeoAutomationManager(proxyManager, browser, async () => []);
+    automation.configureProxy({ source: 'proxyscrape-free', tier: 'tier2' });
+    automation.state = { ...automation.state, running:true, cycleNumber:1, browserIds:[1,2],
+        query:'example topic', targetWebsite:'fixture.test' };
+    automation.monitorBrowserSession = async () => {};
+    await automation.runCycle();
+    assert.equal(requested.tier, 'tier2');
+    assert.equal(requested.retainedAssignments.length, 0);
+    assert.equal(requested.failedProxies.length, 0);
+    assert.deepEqual(events, [
+        [1, null], [2, null], [1, '192.0.2.70'], [2, '192.0.2.71']
+    ]);
+});
