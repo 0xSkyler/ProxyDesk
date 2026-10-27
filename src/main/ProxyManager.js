@@ -84,14 +84,23 @@ class ProxyManager extends node_events_1.EventEmitter {
             if (controller.signal.aborted || this.fetchController !== controller) {
                 throw new Error('Proxy API request cancelled.');
             }
-            const parsed = tier
-                ? (0, ProxyTiers_1.parseGeoProxyFeed)(raw, source.label)
-                : (0, ProxyParser_1.parseBulkText)(raw, source.label);
+            // Plain-text feeds have no country metadata. Only Tier 3 may
+            // accept their entries, explicitly treating them as unclassified
+            // leftovers (actual location is unknown). Tier 1/2 still require
+            // a country-labeled JSON feed.
+            const plainTextTier3 = tier === 'tier3' && !/^[\[{]/.test(raw.trimStart());
+            const parsed = !tier || plainTextTier3
+                ? (0, ProxyParser_1.parseBulkText)(raw, source.label)
+                : (0, ProxyTiers_1.parseGeoProxyFeed)(raw, source.label);
+            if (plainTextTier3)
+                parsed.proxies = parsed.proxies.map(proxy => ({
+                    ...proxy, countryCode: '', countryVerified: false
+                }));
             const countryMatched = tier
                 ? parsed.proxies.filter(proxy => (0, ProxyTiers_1.matchesProxyTier)(proxy.countryCode, tier))
                 : parsed.proxies;
             if (tier && countryMatched.length === 0)
-                throw new Error(`${source.label} returned no proxies labeled with countries in ${ProxyTiers_1.PROXY_TIERS[tier].label}. No other-tier proxies will be assigned.`);
+                throw new Error(`${source.label} returned no assignable entries for ${ProxyTiers_1.PROXY_TIERS[tier].label}. Tier 3 includes any valid entries not classified in Tier 1 or Tier 2.`);
             const retained = (sourceOptions.retainedAssignments || []).filter(
                 assignment => !tier || (0, ProxyTiers_1.matchesProxyTier)(assignment.proxy?.countryCode, tier));
             const endpointOf = proxy => `${proxy.host.toLowerCase()}:${proxy.port}`;
