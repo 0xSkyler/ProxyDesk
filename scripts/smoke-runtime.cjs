@@ -43,6 +43,14 @@ const disableSandboxForLinuxTestRunner = process.platform === 'linux' && !sandbo
             }))));
             throw error;
         });
+        const tier = page.getByLabel('Proxy country tier', { exact: true });
+        await tier.waitFor();
+        assert.equal(await tier.inputValue(), 'tier1');
+        assert.deepEqual(await tier.locator('option').evaluateAll(items => items.map(item => item.value)),
+            ['tier1', 'tier2', 'tier3']);
+        await tier.selectOption('tier3');
+        assert.equal(await tier.inputValue(), 'tier3');
+        await tier.selectOption('tier1');
         assert.equal(await source.inputValue(), 'proxyscrape-free');
         assert.match(await endpoint.inputValue(), /^https:\/\/api\.proxyscrape\.com\//);
         await source.selectOption('all-working');
