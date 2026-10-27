@@ -125,10 +125,13 @@ test('Tier 1 directly fills 100 browser slots from nested live JSON with a singl
         }
     })('main/ProxyManager.js');
     const ids = Array.from({ length: 100 }, (_, i) => i + 1);
-    const assigned = [];
-    const summary = await new ProxyManager().fetchAssignDirect(ids, a => assigned.push(a), undefined,
+    const assigned = [], progress = [];
+    const summary = await new ProxyManager().fetchAssignDirect(ids, a => assigned.push(a),
+        (checked, total) => progress.push({ checked, total }),
         { source: 'proxyscrape-free', tier: 'tier1' });
     assert.equal(calls.length, 1, 'fetch provider feed only; do not probe proxies');
+    assert.deepEqual(progress, [{ checked: 125, total: 125 }],
+        'Parsed count reflects feed entries, not a live validation test');
     const url = new URL(calls[0]);
     assert.equal(url.searchParams.get('request'), 'get_proxies');
     assert.equal(url.searchParams.get('format'), 'json');
