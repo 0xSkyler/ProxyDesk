@@ -141,6 +141,82 @@ test('Tier 1 directly fills 100 browser slots from nested live JSON with a singl
     assert.ok(assigned.every(a => ['US','DE'].includes(a.proxy.countryCode)));
 });
 
+test('HTTP 429 uses ProxyScrape official JSON mirror and respects a live-API cooldown', async () => {
+    const calls = [];
+    const mirrorRows = [
+        { protocol: 'http', ip: '192.0.2.21', port: 8021, country_code: 'US' },
+        { protocol: 'socks5', ip: '192.0.2.22', port: 1080, country_code: 'DE' },
+        { protocol: 'http', ip: '192.0.2.23', port: 8023, country_code: 'BR' },
+        { protocol: 'http', ip: '192.0.2.24', port: 8024, country_code: 'BD' }
+    ];
+    const { ProxyManager } = loadTree(root, {}, {
+        fetch: async (url) => {
+            calls.push(String(url));
+            if (String(url).includes('api.proxyscrape.com')) {
+                return { ok: false, status: 429,
+                    headers: { get: () => '300' },
+                    body: { cancel: async () => {} } };
+            }
+            assert.equal(String(url),
+                'https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/proxies/all/data.json');
+            return { ok: true, status: 200,
+                text: async () => JSON.stringify(mirrorRows) };
+        }
+    })('main/ProxyManager.js');
+    const manager = new ProxyManager(), assignments = [];
+    const first = await manager.fetchAssignDirect([1, 2, 3], a => assignments.push(a),
+        undefined, { source: 'proxyscrape-free', tier: 'tier1' });
+    assert.equal(first.tier, 'tier1');
+    assert.deepEqual(Array.from(assignments, a => a.proxy.countryCode), ['US','DE']);
+    assert.equal(calls.length, 2, 'one live API call plus one official mirror call');
+    assert.equal(calls.filter(url => url.includes('api.proxyscrape.com')).length, 1);
+    assignments.length = 0;
+    await manager.fetchAssignDirect([1, 2], a => assignments.push(a),
+        undefined, { source: 'proxyscrape-free', tier: 'tier1' });
+    assert.equal(calls.length, 2,
+        'repeat cycle uses five-minute mirror cache; no extra live request during cooldown');
+    assert.deepEqual(Array.from(assignments, a => a.proxy.countryCode).sort(), ['DE', 'US']);
+    assert.equal(calls.filter(url => url.includes('ipify') || url.includes('google')).length, 0,
+        'no proxy connectivity or location probes');
+});
+
+test('HTTP 429 does not change non-tier proxy source behavior', async () => {
+    const calls = [];
+    const { ProxyManager } = loadTree(root, {}, {
+        fetch: async (url) => {
+            calls.push(String(url));
+            return { ok: false, status: 429, body: { cancel: async () => {} } };
+        }
+    })('main/ProxyManager.js');
+    const manager = new ProxyManager();
+    await assert.rejects(
+        manager.fetchAssignDirect([1], () => {}, undefined,
+            { source: 'proxyscrape-free', tier: null }),
+        /ProxyScrape API returned HTTP 429/
+    );
+    assert.equal(calls.length, 1, 'legacy direct source does not trigger a mirror fallback');
+});
+
+test('HTTP 429 with unavailable mirror provides a clear provider error instead of bypassing the tier', async () => {
+    const calls = [];
+    const { ProxyManager } = loadTree(root, {}, {
+        fetch: async (url) => {
+            calls.push(String(url));
+            return String(url).includes('api.proxyscrape.com')
+                ? { ok: false, status: 429, body: { cancel: async () => {} } }
+                : { ok: false, status: 503, body: { cancel: async () => {} } };
+        }
+    })('main/ProxyManager.js');
+    const assigned = [];
+    await assert.rejects(
+        new ProxyManager().fetchAssignDirect([1], a => assigned.push(a), undefined,
+            { source: 'proxyscrape-free', tier: 'tier1' }),
+        /live API returned HTTP 429.*official five-minute mirror was also unavailable/
+    );
+    assert.equal(assigned.length, 0);
+    assert.equal(calls.length, 2, 'never cycles endlessly through request endpoints');
+});
+
 test('missing country metadata is excluded from Tier 1/2 but included in Tier 3', async () => {
     const noCountry = JSON.stringify([{ protocol: 'http', ip: '192.0.2.1', port: 8080 }]);
     const { ProxyManager } = loadTree(root, {}, {

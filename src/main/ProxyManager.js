@@ -74,9 +74,10 @@ class ProxyManager extends node_events_1.EventEmitter {
             // geolocate, benchmark, or validate a candidate proxy.
             const tier = sourceOptions.tier == null ? null : (0, ProxyTiers_1.resolveProxyTier)(sourceOptions.tier);
             const requestUrl = new URL(source.endpoint);
-            if (tier && source.id === exports.PROXY_SOURCE_IDS.proxyScrapeFree &&
+            const officialTierApi = Boolean(tier && source.id === exports.PROXY_SOURCE_IDS.proxyScrapeFree &&
                 requestUrl.hostname === 'api.proxyscrape.com' &&
-                requestUrl.pathname === '/v4/free-proxy-list/get') {
+                requestUrl.pathname === '/v4/free-proxy-list/get');
+            if (officialTierApi) {
                 // ProxyScrape v4 serves country-tagged JSON records with
                 // request=get_proxies (display_proxies is the plain-text route).
                 // Use the provider's documented max page size, not the
@@ -87,7 +88,9 @@ class ProxyManager extends node_events_1.EventEmitter {
             }
             const raw = source.id === exports.PROXY_SOURCE_IDS.allWorking
                 ? await (0, AllWorkingProxyProvider_1.fetchAllWorkingProxyText)(controller.signal, requestUrl.href)
-                : await (0, ProxyScrapeProvider_1.fetchProxyScrapeFreeList)({ signal: controller.signal, endpoint: requestUrl.href });
+                : officialTierApi
+                    ? await (0, ProxyScrapeProvider_1.fetchProxyScrapeTierFeed)({ signal: controller.signal, endpoint: requestUrl.href })
+                    : await (0, ProxyScrapeProvider_1.fetchProxyScrapeFreeList)({ signal: controller.signal, endpoint: requestUrl.href });
             if (controller.signal.aborted || this.fetchController !== controller) {
                 throw new Error('Proxy API request cancelled.');
             }
