@@ -19,8 +19,8 @@ function createCycleController() {
  * Single-purpose SEO Tracker orchestration:
  *
  * All Working API -> direct exclusive assignment
- * -> continuous Google monitoring -> challenge pause/resume
- * -> exact-host result click -> repeating same-host Keep Alive
+ * -> continuous Google monitoring -> replace proxies that cannot show results
+ * -> exact-host result click -> timed internal/external Keep Alive
  * -> rotate and restart on the user-configured cadence.
  */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
@@ -231,14 +231,22 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.emitState();
         const seoTasks = [];
         try {
-            // Every rotation starts from a clean browser routing state.
+            const retained = new Map();
+            // Keep the routing identity, but never carry page/session data into a cycle.
             for (const id of browserIds) {
                 if (!this.isCurrent(generation))
                     return;
                 this.browserManager.cancelMeasurementSession(id);
                 this.browserManager.setBrowserKeepAlive(id, false, false);
-                await this.browserManager.assignProxy(id, null);
+                if (this.browserManager.canRetainProxy(id)) {
+                    retained.set(id, this.proxyManager.getAssignment(id));
+                }
+                else {
+                    this.proxyManager.markFailed(this.proxyManager.getAssignment(id));
+                }
             }
+            await Promise.all(browserIds.map((id) => this.browserManager.resetBrowserSession(id)));
+            if (!this.isCurrent(generation)) return;
             await this.proxyManager.fetchAssignDirect(browserIds, (assignment) => {
                 if (!this.isCurrent(generation))
                     return;
@@ -255,7 +263,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     assignedBrowsers: assigned
                 };
                 this.emitState();
-            });
+            }, retained);
             await Promise.allSettled(seoTasks);
             if (!this.isCurrent(generation))
                 return;
@@ -335,23 +343,33 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)) {
                     return;
                 }
-                this.emit('seoResult', {
-                    cycleNumber,
-                    result: {
-                        browserId,
-                        status: 'error',
-                        error: err.message,
-                        monitoring: true,
-                        ranAt: new Date().toISOString()
-                    }
-                });
-                await cancellableDelay(5_000, signal);
-                continue;
+                result = { browserId, status: 'error', error: err.message, monitoring: true, ranAt: new Date().toISOString() };
             }
             if (!this.isCurrent(generation) ||
                 this.state.cycleNumber !== cycleNumber ||
                 !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)) {
                 return;
+            }
+            this.browserManager.recordGoogleResult(browserId, result);
+            if (result.status === 'paused' || result.status === 'error' ||
+                (result.status === 'no-match' && !result.resultsScanned)) {
+                this.emit('seoResult', { cycleNumber, result });
+                try {
+                    const proxy = await this.proxyManager.replaceFailedAssignment(browserId, signal);
+                    if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber ||
+                        !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)) return;
+                    await this.browserManager.assignProxy(browserId, proxy);
+                    if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber ||
+                        !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)) return;
+                    measurementToken = this.browserManager.startMeasurementSession(browserId);
+                    continue;
+                }
+                catch (err) {
+                    if (signal.aborted) return;
+                    this.emit('seoResult', { cycleNumber, result: { ...result, status: 'error', error: err.message } });
+                    await cancellableDelay(5_000, signal);
+                    continue;
+                }
             }
             if (result.status === 'matched' &&
                 result.interactionStatus === 'opened' &&
@@ -428,16 +446,6 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                 continue;
             }
             this.emit('seoResult', { cycleNumber, result });
-            if (result.status === 'paused') {
-                // Keep the same browser, proxy, cookies, and Google session. We do not
-                // solve or bypass the challenge; we simply wait for normal results to
-                // return, then resume the saved keyword/website measurement.
-                const recovered = await this.browserManager.waitForGoogleRecovery(browserId, observationIntervalMs);
-                if (!recovered) {
-                    await cancellableDelay(1_000, signal);
-                }
-                continue;
-            }
             // Matched and no-match observations are measurements, not terminal
             // states. Recheck periodically until the next proxy rotation.
             await cancellableDelay(observationIntervalMs, signal);

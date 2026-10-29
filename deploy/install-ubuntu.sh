@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Run from the Ubuntu desktop terminal as the account that will own the app.
 # Root privileges are used only for packages, /opt and sandbox installation.
-release_tag=v0.5.4-linux.2
+release_tag=v0.5.4-linux.3
 software=0
 if [[ ${1:-} == --software-rendering ]]; then software=1; shift; fi
 if (( $# )); then echo 'Usage: install-ubuntu.sh [--software-rendering]' >&2; exit 2; fi
@@ -123,6 +123,6 @@ sleep 2
 systemctl --user --no-pager --full status proxydesk.service
 printf '\nProxyDesk installed. Enter your keywords/settings in its window and click Start.\n'
 printf 'It runs independently of PuTTY while the Ubuntu desktop remains active.\n'
-printf 'Restarting the app resets tasks/settings to the existing v0.5.4 defaults.\n'
+printf 'Restarting stops tasks; saved keywords and target website remain until deleted.\n'
 printf 'Logs: journalctl --user -u proxydesk -n 50 --no-pager\n'
 printf 'Downloaded files retained at %s\n' "$work"

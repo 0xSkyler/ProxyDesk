@@ -51,10 +51,11 @@ test('100 sleeping monitors keep cancellation listeners bounded and release ever
     let searches = 0;
     const browser = {
         cancelMeasurementSession() {}, setBrowserKeepAlive() {}, assignProxy: async () => {},
+        canRetainProxy: () => false, resetBrowserSession: async () => {}, recordGoogleResult() {},
         startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true,
-        broadcastSearch: async () => { searches++; return { status: 'no-match' }; }
+        broadcastSearch: async () => { searches++; return { status: 'no-match', resultsScanned: 10 }; }
     };
-    const proxies = { cancelCurrentFetch() {}, fetchAssignDirect: async (values, assign) => {
+    const proxies = { cancelCurrentFetch() {}, getAssignment: () => null, markFailed() {}, fetchAssignDirect: async (values, assign) => {
         for (const browserId of values) assign({ browserId, proxy: { host: '127.0.0.1', port: 8080 } });
     } };
     const automation = new SeoAutomationManager(proxies, browser, async () => ids);
@@ -156,8 +157,8 @@ test('stale preparation failure cannot overwrite a newer Start', async () => {
 test('keyword ordering, concurrent assignment, browser bounds and Stop behavior remain', async () => {
     const { SeoAutomationManager } = loadTree(root, {}, { setInterval: () => 1, clearInterval() {} })('main/SeoAutomationManager.js');
     const assignments = [], searches = [], enabled = [];
-    const browser = { cancelMeasurementSession() {}, setBrowserKeepAlive(id, value) { enabled.push([id, value]); }, assignProxy: async (id, proxy) => assignments.push([id, proxy]), startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true, broadcastSearch: async (id, query) => { searches.push([id, query]); return { status: 'matched', interactionStatus: 'opened', matchedUrl: 'https://example.test/a' }; }, startControlledKeepAlive() {} };
-    const proxies = { cancelCurrentFetch() {}, fetchAssignDirect: async (ids, callback) => ids.forEach((id) => callback({ browserId: id, proxy: { host: '127.0.0.1', port: id } })) };
+    const browser = { canRetainProxy: () => false, resetBrowserSession: async () => {}, recordGoogleResult() {}, cancelMeasurementSession() {}, setBrowserKeepAlive(id, value) { enabled.push([id, value]); }, assignProxy: async (id, proxy) => assignments.push([id, proxy]), startMeasurementSession: () => 1, isMeasurementSessionCurrent: () => true, broadcastSearch: async (id, query) => { searches.push([id, query]); return { status: 'matched', interactionStatus: 'opened', matchedUrl: 'https://example.test/a' }; }, startControlledKeepAlive() {} };
+    const proxies = { cancelCurrentFetch() {}, getAssignment: () => null, markFailed() {}, fetchAssignDirect: async (ids, callback) => ids.forEach((id) => callback({ browserId: id, proxy: { host: '127.0.0.1', port: id } })) };
     const automation = new SeoAutomationManager(proxies, browser, async () => [1, 2, 3]);
     await automation.start({ query: ' first, second ', targetWebsite: 'example.test', intervalSec: 30, browserCount: 3, maxPages: 20 }); await tick();
     assert.deepEqual(searches.map((entry) => entry[1]), ['first', 'first', 'first']);
@@ -196,10 +197,19 @@ test('preload coalesces scroll geometry per frame and preserves all Promise sett
     assert.equal(calls.length, 0); frame(); await Promise.all([first, second, third]);
     assert.equal(calls.length, 2); assert.equal(calls[0][2].x, 2);
 });
-test('renderer and its UI controls remain byte-for-byte identical to the reference', () => {
+test('renderer stays identical except for the requested keyword and target persistence', () => {
     const manifest = require('../docs/recovery-manifest.json');
     for (const [file, hash] of Object.entries(manifest.files).filter(([file]) => file.startsWith('dist/renderer/'))) {
-        const actual = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(root, file.replace(/^dist\//, '')))).digest('hex');
+        let bytes = fs.readFileSync(path.join(root, file.replace(/^dist\//, '')));
+        if (file.endsWith('.js')) {
+            // Undo only the three authorized edits in memory; the full original
+            // hash still guards every other UI and vendor byte.
+            bytes = Buffer.from(bytes.toString()
+                .replace(/function readSavedTrackerInput\(key\)\{.*?function gp\(\)/, 'function gp()')
+                .replace('[o,u]=K.useState(()=>readSavedTrackerInput("keywords")),[i,s]=K.useState(()=>readSavedTrackerInput("targetWebsite"))', '[o,u]=K.useState(""),[i,s]=K.useState("")')
+                .replace('K.useEffect(()=>saveTrackerInput("keywords",o),[o]);K.useEffect(()=>saveTrackerInput("targetWebsite",i),[i]);', ''));
+        }
+        const actual = require('node:crypto').createHash('sha256').update(bytes).digest('hex');
         assert.equal(actual, hash, file);
     }
 });

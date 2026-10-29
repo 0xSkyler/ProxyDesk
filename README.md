@@ -6,6 +6,24 @@ React renderer is a committed production bundle; original JSX/TS and source maps
 were not present in the installer. This is a deterministic recovered application
 tree, not a claim that the original development sources were recovered.
 
+## Current task workflow
+
+- Each cycle recreates all browser workspaces with fresh isolated sessions,
+  clearing their cookies, cache, storage and page state.
+- Proxies that display normal Google results stay with the same browser across
+  cycles. A challenge, load error or absence of normal results triggers a
+  replacement. Results without the target website do not alone fail a proxy.
+- After opening a matched Google result, Keep Alive scrolls with pauses for
+  40 seconds, clicks an eligible internal link, spends another 40 seconds there,
+  then clicks a random eligible external link. It continues scrolling on the
+  external page until Stop or the next cycle. Missing eligible links are retried.
+- Keywords and target website are saved as they are edited and survive app
+  restarts. Deleting an input removes its saved value. Other input defaults and
+  the requirement to explicitly start tasks are unchanged.
+- Recognized cookie/consent dialogs are accepted automatically, including
+  delayed banners and frames. Custom controls or translated labels may need
+  site-specific support.
+
 ## Build and run
 
 Ubuntu 24.04 x64, Node 20:
@@ -65,7 +83,7 @@ that desktop (for example through RustDesk), as its regular user with sudo:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl
-curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.4-linux.2/deploy/install-ubuntu.sh -o /tmp/proxydesk-install.sh && bash /tmp/proxydesk-install.sh --software-rendering
+curl --fail --location --retry 3 https://raw.githubusercontent.com/0xSkyler/ProxyDesk/v0.5.4-linux.3/deploy/install-ubuntu.sh -o /tmp/proxydesk-install.sh && bash /tmp/proxydesk-install.sh --software-rendering
 ```
 
 The installer verifies the release SHA-256, installs the tar distribution under
@@ -80,8 +98,8 @@ clears absent old display variables and resets a failed start limit before retry
 The crash restart rate remains bounded while an unavailable display stays unavailable.
 
 Enter the existing settings/keywords and click Start in the application. Keep the
-desktop session active. App restarts preserve the reference behavior: tasks do
-not restart automatically, and its input settings return to the original defaults.
+desktop session active. Tasks do not restart automatically. Keywords and target
+website remain saved; other inputs return to the existing defaults.
 
 ```sh
 systemctl --user status proxydesk
@@ -89,7 +107,7 @@ journalctl --user -u proxydesk -n 50 --no-pager
 systemctl --user stop proxydesk
 ```
 
-Main-branch CI publishes the immutable `v0.5.4-linux.2` release only after native
+Main-branch CI publishes the immutable `v0.5.4-linux.3` release only after native
 build, packaged smoke tests and original/optimized fixture comparison succeed.
 The original Windows release is retained. The installer checks host prerequisites;
 the target VPS's display, sandbox configuration and live proxy/search behavior
@@ -102,7 +120,7 @@ still need validation there.
 - Dispose the global login listener, IPC handlers/listeners and Keep Alive driver.
 - Invalidate stale Start completions and wake cancelled monitor sleeps.
 - Cancel in-page Keep Alive timers/animation frames and the Google live observer
-  on Stop/rotation/disposal; preserve scroll durations and link-selection rules.
+  on Stop/rotation/disposal.
 - Release the losing timeout in successful DOM races.
 - Cancel unread proxy API error responses so streamed failures release their
   requests while preserving the same HTTP error messages and timeout.
@@ -146,9 +164,9 @@ old runtime: upgrading Electron/Chromium should be a separate compatibility task
 with proxy, BrowserView, rendering and long-session regression evidence. BrowserView
 is retained to avoid an unverified UI/runtime migration. Chromium browser content
 is the dominant cost at high concurrency; eliminating bundled duplicate npm
-packages will not make 100 real pages inexpensive. No scheduled cookie/cache
-purge, scheduled task restart, browser pooling or concurrency reduction is added.
+packages will not make 100 real pages inexpensive. Browser data is reset on each
+cycle as described above; no browser pooling or concurrency reduction is added.
 
 The shipped reference has no persistent settings / Save Settings control.
-This optimization preserves its defaults and React input behavior; it does not
-add a new settings workflow.
+The current build saves only keywords and target website automatically; it does
+not add a Save Settings control or persist the remaining input settings.

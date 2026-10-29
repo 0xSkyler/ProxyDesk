@@ -173,4 +173,18 @@ jobs:
           cd release-linux
           sha256sum *.AppImage *.tar.gz > SHA256SUMS
           cd ..
-          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "ProxyDesk v0.5.4 - Linux reliability update ${TAG##*.}" --notes "Native source build. Original v0.5.4 UI and task behavior retained. Lifecycle cancellation, shutdown cleanup, log bounds and dependency packaging improvements; release unread proxy API error bodies; bounded cancellation listeners for 100 workspaces; desktop relaunch recovery after a display failure. Ubuntu CI regression tests run against the build Node and bundled Electron Node runtimes. AppImage renderer smoke, installed sandbox and paired original/optimized fixture checks passed. Longer VPS soak and live search regression remain environment-specific checks."
+          cat > release-notes.md <<'NOTES'
+          Five requested task workflow changes:
+          - Fresh isolated browser sessions and cleared browsing data on every cycle.
+          - Keep healthy proxies on the same browser; replace those that cannot display normal Google results. A missing target alone does not fail a proxy.
+          - Keep Alive: 40 seconds on the target page, an internal link, another 40 seconds, then a random eligible external link and continued scrolling until the next cycle or Stop.
+          - Save keywords and target website across restarts until the user deletes them.
+          - Automatically accept recognized cookie and site-consent dialogs, including delayed banners and frames.
+
+          Existing UI layout, numeric defaults, dependency versions and browser concurrency limits remain unchanged. Tasks still require an explicit Start after restarting.
+
+          Validation includes regression tests under Node 20 and Electron's bundled Node, source/archive checks, packaged lifecycle fixtures, AppImage startup/shutdown and installed sandbox smoke tests. Local graphical fixtures also exercised the timed navigation, cycle storage clearing, consent and saved-input restart/deletion behavior. Live Google/public proxy operation, custom consent controls and long-duration VPS behavior remain environment-specific checks.
+
+          The attached original/current fixture comparison includes intentionally changed task behavior; it is not a like-for-like performance claim. Existing releases and the original Windows installer remain unchanged.
+          NOTES
+          gh release create "$TAG" release-linux/*.AppImage release-linux/*.tar.gz release-linux/SHA256SUMS release-linux/comparison.md release-linux/baseline.json release-linux/optimized.json --target "$GITHUB_SHA" --title "ProxyDesk v0.5.4 - Linux task workflow update ${TAG##*.}" --notes-file release-notes.md

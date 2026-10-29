@@ -16,6 +16,7 @@ const constants_1 = require("../shared/constants");
 const seo_1 = require("../shared/seo");
 const Logger_1 = require("./Logger");
 const { withTimeout } = require("./runtime");
+const { buildAcceptCookieConsentScript } = require("./CookieConsent");
 /** Cap on automatic proxy swaps triggered by hitting Google's CAPTCHA page
  * in a row, before giving up and leaving it for a manual "Change Proxy"
  * click — without this, a proxy pool that's mostly Google-flagged (a real
@@ -62,9 +63,10 @@ class BrowserManager extends node_events_1.EventEmitter {
     keepAliveIntervalMs = 60_000;
     keepAliveMaxHops = 25;
     keepAliveFollowLinks = true;
-    keepAliveWatchdogMs = 18_000;
-    keepAliveActionTimeoutMs = 14_000;
+    keepAliveWatchdogMs = 55_000;
+    keepAliveActionTimeoutMs = 50_000;
     measurementTokens = new Map();
+    sessionGenerations = new Map();
     creating = new Map();
     disposing = new Map();
     disposed = false;
@@ -100,7 +102,8 @@ class BrowserManager extends node_events_1.EventEmitter {
         electron_1.app.on('login', this.loginHandler);
     }
     partitionFor(id, _persist) {
-        return buildEphemeralPartitionName(id);
+        const generation = this.sessionGenerations.get(id) ?? 0;
+        return buildEphemeralPartitionName(id) + (generation ? `-${generation}` : '');
     }
     async clearLegacyPersistentPartition(id) {
         const legacy = electron_1.session.fromPartition(`${constants_1.PARTITION_PREFIX}${id}`, { cache: true });
@@ -160,6 +163,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         };
         const managed = {
             id,
+            options,
             view,
             session: ses,
             state,
@@ -175,7 +179,10 @@ class BrowserManager extends node_events_1.EventEmitter {
             keepAliveFailureCount: 0,
             keepAliveVisited: new Set(),
             controlledKeepAliveHost: null,
-            controlledKeepAliveContinuous: false
+            controlledKeepAliveContinuous: false,
+            keepAliveStep: 0,
+            googleResultsSeen: false,
+            googleResultsFailed: false
         };
         this.browsers.set(id, managed);
         this.wireEvents(managed, options);
@@ -189,6 +196,14 @@ class BrowserManager extends node_events_1.EventEmitter {
     wireEvents(managed, options) {
         const { view, id } = managed;
         const wc = view.webContents;
+        const acceptConsent = () => {
+            for (const frame of wc.mainFrame?.framesInSubtree ?? []) {
+                try { void frame.executeJavaScript(buildAcceptCookieConsentScript()).catch(() => undefined); }
+                catch { /* A frame may be detached while its document navigates. */ }
+            }
+        };
+        wc.on('dom-ready', acceptConsent);
+        wc.on('did-frame-finish-load', acceptConsent);
         // Treat "loading" as main-document readiness, not as "every network
         // request on the page has finished". Modern sites can keep requests open
         // indefinitely; DOM automation must not be blocked by those background
@@ -406,6 +421,8 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     async assignProxyOwned(id, proxy, managed) {
         if (this.disposed || managed.disposed || this.browsers.get(id) !== managed) return;
+        managed.googleResultsSeen = false;
+        managed.googleResultsFailed = false;
         this.cancelKeepAliveAction(managed);
         // Proxy changes define a new browsing generation. Cancel any old Keep
         // Alive worker here as a final safety net even if the orchestration layer
@@ -476,6 +493,16 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     isMeasurementSessionCurrent(id, token) {
         return !this.disposed && this.browsers.has(id) && this.measurementTokens.get(id) === token;
+    }
+    canRetainProxy(id) {
+        const managed = this.get(id);
+        return Boolean(managed.state.proxy && managed.googleResultsSeen && !managed.googleResultsFailed);
+    }
+    recordGoogleResult(id, result) {
+        const managed = this.get(id);
+        if (result.status === 'matched' || result.resultsScanned > 0) managed.googleResultsSeen = true;
+        if (result.status === 'paused' || result.status === 'error' ||
+            (result.status === 'no-match' && !result.resultsScanned)) managed.googleResultsFailed = true;
     }
     async broadcastSearch(id, query, targetWebsite, maxPages = 20, measurementToken) {
         const managed = this.get(id);
@@ -582,6 +609,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 watcher = null;
             }
             let pageMaxObserved = watcher?.observedResults ?? 0;
+            if (pageMaxObserved > 0) managed.googleResultsSeen = true;
             let lastSignature = watcher?.signature ?? '';
             let stableScans = watcher?.signature ? 1 : 0;
             let firstObservedAt = watcher?.observedResults ? Date.now() : 0;
@@ -665,6 +693,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                     };
                 }
                 if (watcher) {
+                    if (watcher.observedResults > 0) managed.googleResultsSeen = true;
                     pageMaxObserved = Math.max(pageMaxObserved, watcher.observedResults || 0);
                     if (watcher.match) {
                         // Match detection and first click are deliberately coupled to the
@@ -930,6 +959,16 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.disposing.set(id, cleanup);
         try { await cleanup; } finally { this.disposing.delete(id); }
     }
+    async resetBrowserSession(id) {
+        const managed = this.get(id);
+        const options = managed.options;
+        const bounds = managed.lastBounds;
+        await this.destroyBrowser(id);
+        if (this.disposed) return;
+        this.sessionGenerations.set(id, (this.sessionGenerations.get(id) ?? 0) + 1);
+        await this.createBrowser(id, { ...options, startPage: 'about:blank' });
+        if (bounds) this.setBounds(id, bounds);
+    }
     async destroyAll() {
         this.disposed = true;
         clearInterval(this.keepAliveTimer);
@@ -1067,6 +1106,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         managed.controlledKeepAliveContinuous = true;
         managed.keepAliveEnabled = true;
         managed.keepAliveHops = 0;
+        managed.keepAliveStep = 0;
         managed.keepAliveBusy = false;
         managed.keepAliveBusySince = 0;
         managed.keepAliveFailureCount = 0;
@@ -1095,6 +1135,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.keepAliveTimer = setInterval(() => this.tickKeepAlive(), 500);
     }
     cancelKeepAliveAction(managed) {
+        managed.cancelKeepAliveNavigation?.();
         const wc = managed.view.webContents;
         if (!wc.isDestroyed()) {
             void wc.executeJavaScript('window.__proxyDeskKeepAliveController?.abort()', true).catch(() => undefined);
@@ -1128,6 +1169,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         }
         if (resetHops) {
             managed.keepAliveHops = 0;
+            managed.keepAliveStep = 0;
             managed.keepAliveVisited.clear();
             const currentUrl = managed.view.webContents.getURL();
             if (currentUrl)
@@ -1160,6 +1202,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             }
             if (resetHops) {
                 managed.keepAliveHops = 0;
+                managed.keepAliveStep = 0;
                 managed.keepAliveVisited.clear();
                 const currentUrl = managed.view.webContents.getURL();
                 if (currentUrl)
@@ -1235,10 +1278,6 @@ class BrowserManager extends node_events_1.EventEmitter {
                 managed.keepAliveBusySince = 0;
                 if (!managed.keepAliveEnabled)
                     return;
-                if (managed.keepAliveNextAt <= Date.now()) {
-                    const jitter = 0.8 + Math.random() * 0.4;
-                    managed.keepAliveNextAt = Date.now() + Math.round(this.keepAliveIntervalMs * jitter);
-                }
                 managed.keepAliveLastHeartbeatAt = Date.now();
                 this.updateState(managed, {
                     keepAliveActivity: 'waiting',
@@ -1249,88 +1288,57 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
     async runKeepAliveAction(managed, generation) {
         const wc = managed.view.webContents;
-        const pagesVisited = managed.keepAliveHops + 1;
-        const controlled = managed.controlledKeepAliveContinuous && Boolean(managed.controlledKeepAliveHost);
-        const canHop = controlled || (this.keepAliveFollowLinks && pagesVisited < this.keepAliveMaxHops);
+        const step = managed.keepAliveStep ?? 0;
         try {
-            if (controlled && managed.controlledKeepAliveHost) {
-                let currentHost = '';
-                try {
-                    currentHost = new URL(wc.getURL()).hostname
-                        .toLowerCase()
-                        .replace(/^www\./, '')
-                        .replace(/\.$/, '');
-                }
-                catch {
-                    currentHost = '';
-                }
-                if (currentHost !== managed.controlledKeepAliveHost) {
-                    throw new Error(`Keep Alive left controlled host ${managed.controlledKeepAliveHost}; current host is ${currentHost || 'unknown'}.`);
-                }
+            const currentUrl = wc.getURL();
+            const currentHost = (0, seo_1.normalizeTargetHost)(currentUrl);
+            if (managed.controlledKeepAliveHost && currentHost !== managed.controlledKeepAliveHost) {
+                throw new Error(`Keep Alive left controlled host ${managed.controlledKeepAliveHost}.`);
             }
-            const actionPromise = wc.executeJavaScript(buildKeepAliveActionScript(canHop, Array.from(managed.keepAliveVisited), managed.controlledKeepAliveHost ?? undefined), true);
             const result = await withTimeout(
-                actionPromise,
-                this.keepAliveActionTimeoutMs, () => {
-                    throw new Error(`Keep Alive DOM action exceeded ${this.keepAliveActionTimeoutMs} ms.`);
-                });
-            if (generation !== managed.keepAliveGeneration || !managed.keepAliveEnabled)
-                return;
-            const completedAt = new Date().toISOString();
+                wc.executeJavaScript(buildKeepAliveActionScript(step < 2, Array.from(managed.keepAliveVisited), currentHost, step === 0 ? 'internal' : 'external'), true),
+                this.keepAliveActionTimeoutMs, () => { throw new Error('Keep Alive DOM action timed out.'); });
+            if (generation !== managed.keepAliveGeneration || !managed.keepAliveEnabled) return;
             managed.keepAliveLastHeartbeatAt = Date.now();
             managed.keepAliveFailureCount = 0;
-            if (!controlled && pagesVisited >= this.keepAliveMaxHops) {
-                managed.keepAliveEnabled = false;
-                this.updateState(managed, {
-                    lastKeepAliveAt: completedAt,
-                    keepAliveEnabled: false,
-                    keepAliveHops: managed.keepAliveHops,
-                    keepAliveActivity: 'idle',
-                    keepAliveFailureCount: 0,
-                    lastKeepAliveHeartbeatAt: new Date(managed.keepAliveLastHeartbeatAt).toISOString()
-                });
+            if (!result.clickedUrl) {
+                managed.keepAliveNextAt = Date.now() + (step < 2 ? 2_000 : 0);
+                this.updateState(managed, { keepAliveActivity: 'waiting', lastKeepAliveAt: new Date().toISOString() });
                 return;
             }
-            if (!canHop || !result.clickedUrl) {
-                if (controlled) {
-                    managed.keepAliveNextAt = Date.now() + 2_000;
-                    this.updateState(managed, {
-                        lastKeepAliveAt: completedAt,
-                        keepAliveEnabled: true,
-                        keepAliveHops: managed.keepAliveHops,
-                        keepAliveActivity: 'waiting',
-                        keepAliveFailureCount: 0,
-                        lastKeepAliveHeartbeatAt: new Date(managed.keepAliveLastHeartbeatAt).toISOString()
-                    });
-                    return;
-                }
-                managed.keepAliveEnabled = false;
-                this.updateState(managed, {
-                    lastKeepAliveAt: completedAt,
-                    keepAliveEnabled: false,
-                    keepAliveHops: managed.keepAliveHops,
-                    keepAliveActivity: 'idle',
-                    keepAliveFailureCount: 0,
-                    lastKeepAliveHeartbeatAt: new Date(managed.keepAliveLastHeartbeatAt).toISOString()
+            // Do not start the second 40-second visit before the new document lands.
+            let navigationTimer, cancelNavigation;
+            await withTimeout(new Promise((resolve, reject) => {
+                cancelNavigation = () => reject(new Error('Keep Alive cancelled.'));
+                managed.cancelKeepAliveNavigation = cancelNavigation;
+                navigationTimer = setInterval(() => {
+                    if (generation !== managed.keepAliveGeneration || !managed.keepAliveEnabled || wc.isDestroyed()) {
+                        reject(new Error('Keep Alive cancelled.')); return;
+                    }
+                    if (wc.getURL() !== currentUrl && !managed.state.loading) resolve();
+                }, 100);
+            }), 10_000, () => { throw new Error('Keep Alive link did not finish navigating.'); })
+                .finally(() => {
+                    clearInterval(navigationTimer);
+                    if (managed.cancelKeepAliveNavigation === cancelNavigation) managed.cancelKeepAliveNavigation = null;
                 });
-                return;
-            }
+            if (generation !== managed.keepAliveGeneration || !managed.keepAliveEnabled) return;
             managed.keepAliveVisited.add(result.clickedUrl);
             managed.keepAliveHops += 1;
-            if (controlled)
-                managed.keepAliveNextAt = Date.now() + 1_500;
+            managed.keepAliveStep = step + 1;
+            if (step === 1) managed.controlledKeepAliveHost = null;
+            managed.keepAliveNextAt = Date.now();
             this.updateState(managed, {
-                keepAliveEnabled: true,
+                keepAliveEnabled: managed.keepAliveEnabled,
                 keepAliveHops: managed.keepAliveHops,
-                lastKeepAliveAt: completedAt,
-                keepAliveActivity: 'opening-link',
+                lastKeepAliveAt: new Date().toISOString(),
+                keepAliveActivity: 'waiting',
                 keepAliveFailureCount: 0,
                 lastKeepAliveHeartbeatAt: new Date(managed.keepAliveLastHeartbeatAt).toISOString()
             });
         }
         catch (err) {
-            if (generation !== managed.keepAliveGeneration || !managed.keepAliveEnabled)
-                return;
+            if (generation !== managed.keepAliveGeneration || !managed.keepAliveEnabled) return;
             managed.keepAliveFailureCount += 1;
             managed.keepAliveLastHeartbeatAt = Date.now();
             managed.keepAliveNextAt = Date.now() + 1_250;
@@ -1344,13 +1352,15 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
 }
 exports.BrowserManager = BrowserManager;
-function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
+function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost, linkMode = 'internal') {
     return `(async () => {
     window.__proxyDeskKeepAliveController?.abort();
     const controller = new AbortController();
     window.__proxyDeskKeepAliveController = controller;
     const signal = controller.signal;
     try {
+    const startedAt = performance.now();
+    const linkMode = ${JSON.stringify(linkMode)};
     const visited = new Set(${JSON.stringify(visitedUrls)});
     const allowedHost = ${JSON.stringify(allowedHost?.toLowerCase() ?? '')};
     const wait = (ms) => new Promise((resolve, reject) => {
@@ -1407,12 +1417,12 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
       await wait(250);
 
       for (let cycle = 0; cycle < cycles; cycle += 1) {
-        const downDuration = 1200 + Math.floor(Math.random() * 700);
-        const upDuration = 1200 + Math.floor(Math.random() * 700);
+        const downDuration = 900 + Math.floor(Math.random() * 500);
+        const upDuration = 900 + Math.floor(Math.random() * 500);
         await animateScrollTo(maxScroll(), downDuration);
-        await wait(250 + Math.floor(Math.random() * 250));
+        await wait(7_500);
         await animateScrollTo(0, upDuration);
-        await wait(250 + Math.floor(Math.random() * 250));
+        await wait(7_500);
       }
     } else {
       for (let cycle = 0; cycle < cycles; cycle += 1) {
@@ -1423,6 +1433,7 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
       }
     }
 
+    await wait(Math.max(0, 40_000 - (performance.now() - startedAt)));
     if (!${allowHop ? 'true' : 'false'}) return {};
 
     const blocked = /(login|log-in|logout|sign-in|signin|signup|register|account|cart|basket|checkout|payment|subscribe|privacy|terms|contact|download|delete|remove|admin|wp-admin|wp-login|author|tag|category)/i;
@@ -1444,8 +1455,8 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
         if (!/^https?:$/.test(url.protocol)) return;
 
         const host = url.hostname.toLowerCase().replace(/^www\\./, '');
-        if (host !== currentHost) return;
-        if (allowedHost && host !== allowedHost) return;
+        if (linkMode === 'external' ? host === currentHost : host !== currentHost) return;
+        if (linkMode !== 'external' && allowedHost && host !== allowedHost) return;
 
         url.hash = '';
         const normalized = url.href;
@@ -1482,12 +1493,11 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
 
     candidates.sort((a, b) => b.score - a.score);
     const topScore = candidates[0].score;
-    const top = candidates.filter((candidate) => candidate.score >= topScore - 15);
+    const top = linkMode === 'external' ? candidates : candidates.filter((candidate) => candidate.score >= topScore - 15);
     const chosen = top[Math.floor(Math.random() * top.length)];
 
     try {
       chosen.anchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
-      await wait(250);
       chosen.anchor.target = '_self';
       chosen.anchor.focus({ preventScroll: true });
       chosen.anchor.click();
