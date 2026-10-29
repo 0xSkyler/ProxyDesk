@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const asar = require('@electron/asar');
 const path = require('node:path');
 const archive = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(__dirname, '../release-linux/linux-unpacked/resources/app.asar');
-const files = asar.listPackage(archive);
+const files = asar.listPackage(archive).map((file) => file.replace(/\\/g, '/'));
 for (const file of files) {
     assert.ok(!file.includes('node_modules'), `Unexpected production dependency: ${file}`);
     assert.ok(!/\/tests\/|\/scripts\/|\/docs\/|ProxyValidator|ProxyScorer|ProxyScrapeProvider|\.exe$|\.node$/.test(file), `Unexpected packaged file: ${file}`);
