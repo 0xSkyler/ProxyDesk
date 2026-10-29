@@ -9,7 +9,7 @@ for (const file of files) {
     assert.ok(!/\/tests\/|\/scripts\/|\/docs\/|ProxyValidator|ProxyScorer|ProxyScrapeProvider|\.exe$|\.node$/.test(file), `Unexpected packaged file: ${file}`);
     if (/\.(?:js|css|html)$/.test(file)) {
         const local = path.resolve(__dirname, '..', file.slice(1));
-        assert.deepEqual(asar.extractFile(archive, file.slice(1)), require('node:fs').readFileSync(local), `Stale packaged source: ${file}`);
+        assert.deepEqual(asar.extractFile(archive, file.slice(1).split('/').join(path.sep)), require('node:fs').readFileSync(local), `Stale packaged source: ${file}`);
     }
 }
 for (const expected of ['/src/main/main.js', '/src/preload/preload.js', '/src/renderer/index.html']) assert.ok(files.includes(expected), `Missing ${expected}`);
