@@ -24,7 +24,17 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run check
-      - run: npm run test:windows
+      - name: Test Windows-relevant behavior under Node 20
+        shell: pwsh
+        run: |
+          npm run test:windows 2>&1 | Tee-Object -FilePath windows-tests.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            @('### Windows test failure', '', '~~~text') | Add-Content $env:GITHUB_STEP_SUMMARY
+            Get-Content windows-tests.log | Add-Content $env:GITHUB_STEP_SUMMARY
+            '~~~' | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+          exit $code
       - name: Test Electron's bundled Node runtime
         shell: pwsh
         run: |
