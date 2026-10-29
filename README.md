@@ -1,4 +1,4 @@
-# ProxyDesk v0.5.4 for Linux
+# ProxyDesk v0.5.4
 
 Native Electron application with the recovered v0.5.4 UI and task workflow.
 The main/preload/shared code is readable recovered JavaScript. The existing
@@ -41,6 +41,31 @@ Builds use tracked `src/` and the lockfile. Output: `release-linux/*.AppImage` a
 packages are development tools; the runtime import graph uses only Electron and
 Node built-ins. React/React DOM/Zustand are already in the existing renderer.
 Their license files are retained in `third-party/`.
+
+### Windows x64
+
+The Windows release uses the same tracked application source and includes the
+five task workflow changes described above. Download the installer or ZIP from
+the [`v0.5.4-windows.3` release](https://github.com/0xSkyler/ProxyDesk/releases/tag/v0.5.4-windows.3).
+The original Windows installer in this checkout remains an unchanged reference.
+The new binaries are unsigned; no signing certificate is configured.
+
+On Windows with Node 20:
+
+```sh
+npm ci
+npm run test:windows
+npm run package:windows
+node scripts/check-package.cjs release-windows/win-unpacked/resources/app.asar
+node scripts/smoke-runtime.cjs release-windows/win-unpacked/ProxyDesk.exe
+```
+
+Output: `release-windows/*-Setup.exe` and `release-windows/*.zip`. The ZIP can be
+extracted and run through `ProxyDesk.exe`. The Windows test command runs the
+42 platform-relevant tests; Ubuntu systemd launcher tests remain in Linux CI.
+Native Windows CI also silently installs the new installer and verifies the
+installed app's renderer, initial workspaces, input validation and graceful exit
+before publishing the new release and SHA-256 checksums.
 
 AppImage:
 

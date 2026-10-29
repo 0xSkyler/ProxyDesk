@@ -1,0 +1,110 @@
+name: Native Windows build and release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm run test:windows
+      - name: Test Electron's bundled Node runtime
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & node_modules/electron/dist/electron.exe --test tests/benchmark.test.cjs tests/cycle-behavior.test.cjs tests/logging.test.cjs tests/networking.test.cjs tests/reliability.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: npm run package:windows
+      - name: Verify production archive
+        run: node scripts/check-package.cjs release-windows/win-unpacked/resources/app.asar
+      - name: Verify packaged renderer and shutdown
+        run: node scripts/smoke-runtime.cjs release-windows/win-unpacked/ProxyDesk.exe
+      - name: Verify installer and installed application
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release-windows/*-Setup.exe
+          if (@($installer).Count -ne 1) { throw 'Expected exactly one installer' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'proxydesk-installed'
+          $process = Start-Process -FilePath $installer.FullName -ArgumentList @('/S', "/D=$installDir") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with $($process.ExitCode)" }
+          $executable = Join-Path $installDir 'ProxyDesk.exe'
+          if (!(Test-Path $executable)) { throw "Missing installed executable: $executable" }
+          node scripts/smoke-runtime.cjs $executable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Create checksums
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem release-windows/*-Setup.exe, release-windows/*.zip)
+          if ($files.Count -ne 2) { throw 'Expected one installer and one ZIP' }
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content release-windows/SHA256SUMS -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProxyDesk-Windows-x64
+          path: |
+            release-windows/*-Setup.exe
+            release-windows/*.zip
+            release-windows/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-windows:
+    needs: build-windows
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ProxyDesk-Windows-x64
+          path: release-windows
+      - name: Publish verified Windows release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$(node -p 'require("./package.json").windowsRelease')"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already published; its artifacts will not be overwritten."
+            exit 0
+          fi
+          cd release-windows
+          sha256sum --check SHA256SUMS
+          cd ..
+          cat > windows-release-notes.md <<'NOTES'
+          Windows x64 build of the same task workflow changes as v0.5.4-linux.3:
+          - Fresh isolated browser sessions and cleared browsing data on every cycle.
+          - Retain healthy proxies on the same browser; replace those that cannot display normal Google results. An absent target alone does not fail a proxy.
+          - Keep Alive for 40 seconds, click an eligible internal link, keep alive for another 40 seconds, then click a random eligible external link and continue scrolling until Stop or the next cycle.
+          - Save keywords and target website across restarts until deleted.
+          - Accept recognized cookie and site-consent dialogs, including delayed banners and frames.
+
+          Includes a per-user NSIS installer, a ZIP distribution and SHA-256 checksums. Binaries are unsigned; no signing certificate is configured.
+
+          Gated by 42 platform-relevant tests under Node 20 and Electron's bundled Node, source/archive verification, packaged renderer startup/shutdown and a silent installation followed by the installed-app smoke test on Windows Server 2022. Ubuntu systemd launcher tests remain in Linux CI. Live Google/public proxies, custom consent widgets and long-duration desktop behavior require environment-specific checks.
+
+          Application logic and UI are unchanged from the Linux task workflow release. Existing releases and the original Windows installer remain untouched.
+          NOTES
+          gh release create "$TAG" release-windows/*-Setup.exe release-windows/*.zip release-windows/SHA256SUMS --target "$GITHUB_SHA" --title "ProxyDesk v0.5.4 - Windows task workflow update 3" --notes-file windows-release-notes.md

@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const asar = require('@electron/asar');
 const path = require('node:path');
-const archive = path.resolve(__dirname, '../release-linux/linux-unpacked/resources/app.asar');
+const archive = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(__dirname, '../release-linux/linux-unpacked/resources/app.asar');
 const files = asar.listPackage(archive);
 for (const file of files) {
     assert.ok(!file.includes('node_modules'), `Unexpected production dependency: ${file}`);
