@@ -254,4 +254,11 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         if (application) await application.close();
         fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => {
+    console.error(error);
+    if (process.env.GITHUB_ACTIONS === 'true') {
+        const detail = String(error.stack || error).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+        console.error(`::error title=DOM native consent/cache check::${detail}`);
+    }
+    process.exitCode = 1;
+});
