@@ -281,7 +281,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const retained = cycleNumber > 1 ? browserIds.filter(id => {
             const health = rotationStates.get(id);
             return health.proxy && belongsToSelectedTier(health.proxy) &&
-                health.targetOpened && !health.captchaSeen && !health.failed;
+                health.googleReached && !health.captchaSeen && !health.failed;
         }).map(browserId => ({ browserId, proxy: rotationStates.get(browserId).proxy, retained: true })) : [];
         const retainedIds = new Set(retained.map(assignment => assignment.browserId));
         const replacementIds = browserIds.filter(id => !retainedIds.has(id));
@@ -305,7 +305,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.emitState();
         const seoTasks = [];
         try {
-            // Stop outgoing work before navigation; keep all session data.
+            // Stop outgoing work before navigation and per-browser data clearing.
             for (const id of browserIds) {
                 if (!this.isCurrent(generation))
                     return;
@@ -330,7 +330,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             };
             // Bound page preparation to two browsers at a time on small PCs.
             // Proxy fetching/searching starts only after all pages are released.
-            // No cache, cookie or local-storage clearing occurs.
+            // Each released document's session data is cleared before searches.
             try {
                 await Promise.all(Array.from({ length: Math.min(2, browserIds.length) }, cleanBrowser));
             } catch (error) { cleanupController.abort(); throw error; }

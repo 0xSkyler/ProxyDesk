@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '../src');
 const tick = () => new Promise(setImmediate);
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
-test('every automation cycle preserves all caches and storage before proxy fetching', async () => {
+test('every automation cycle releases and clears all browser documents before proxy fetching', async () => {
     const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
     const ids = [1, 2, 3, 4, 5], events = [];
     let active = 0, peak = 0, cycle = 0;
@@ -38,7 +38,7 @@ test('every automation cycle preserves all caches and storage before proxy fetch
     assert.deepEqual(events.slice(0, 5).map(e => e[1]), ids.map(() => 'stop'));
 });
 
-test('Stop cancels a stalled cycle without clearing browser data', async () => {
+test('Stop cancels stalled cycle preparation before any proxy fetch', async () => {
     const { SeoAutomationManager } = loadTree(root, {})('main/SeoAutomationManager.js');
     const gate = deferred(); let fetched = false;
     const browser = {
@@ -78,7 +78,7 @@ test('cache and cookie clearing compatibility methods are safe no-ops', async ()
     }
 });
 
-test('browser profiles are isolated per ID and persist across recreation', async () => {
+test('browser profiles remain isolated; cycle preparation clears their data', async () => {
     const electron = fakeElectron();
     const { BrowserManager } = loadTree(root, electron)('main/BrowserManager.js');
     const manager = new BrowserManager(); manager.attachWindow(electron.window);
@@ -93,7 +93,11 @@ test('browser profiles are isolated per ID and persist across recreation', async
     await manager.createBrowser(1, { startPage: 'about:blank' });
     assert.equal(manager.get(1).session, a.session);
     assert.equal(manager.get(1).session.cookieMarker, 'accepted');
-    assert.equal(manager.get(1).session.cacheMarker, 'cached');
+    a.session.clearStorageData = async () => { delete a.session.cookieMarker; };
+    a.session.clearCache = async () => { delete a.session.cacheMarker; };
+    await manager.prepareCycleDocument(1);
+    assert.equal(a.session.cookieMarker, undefined);
+    assert.equal(a.session.cacheMarker, undefined);
     assert.equal(b.session.cookieMarker, undefined);
     await manager.destroyAll();
 });
@@ -109,6 +113,30 @@ test('browser destruction releases connections but never clears native storage',
     await manager.destroyBrowser(1);
     assert.equal(managed.view.webContents.isDestroyed(), true);
     assert.equal(managed.session.proxy.mode, 'direct');
+    await manager.destroyAll();
+});
+
+test('cycle data-clearing failures are reported instead of starting with dirty storage', async () => {
+    const electron = fakeElectron();
+    const { BrowserManager } = loadTree(root, electron)('main/BrowserManager.js');
+    const manager = new BrowserManager(); manager.attachWindow(electron.window);
+    await manager.createBrowser(1, { startPage: 'about:blank' });
+    manager.get(1).session.clearCache = async () => { throw Error('cache clearing failed'); };
+    await assert.rejects(manager.prepareCycleDocument(1), /cache clearing failed/);
+    await manager.destroyAll();
+});
+
+test('Stop cancels a stalled renderer-cache acknowledgement and releases request ownership', async () => {
+    const electron = fakeElectron();
+    const { BrowserManager } = loadTree(root, electron)('main/BrowserManager.js');
+    const manager = new BrowserManager(); manager.attachWindow(electron.window);
+    await manager.createBrowser(1, { startPage: 'about:blank' });
+    const managed = manager.get(1), controller = new AbortController();
+    managed.view.webContents.send = () => {};
+    const work = manager.prepareCycleDocument(1, controller.signal);
+    await tick(); controller.abort();
+    await assert.rejects(work, /cancelled/);
+    assert.equal(managed.rendererCacheRequest, null);
     await manager.destroyAll();
 });
 

@@ -1,0 +1,128 @@
+name: DOM v0.5.29 task workflow release
+
+on:
+  push:
+    branches: [release/v0.5.29]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dom-v0.5.29-release
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Verify DOM identity and version
+        run: node -e "const p=require('./package.json');if(p.name!=='dom'||p.productName!=='DOM'||p.version!=='0.5.29'||p.build.appId!=='com.dom.desktop')throw Error('Wrong DOM application baseline')"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm run package:windows
+      - run: node scripts/check-package.cjs release-windows/win-unpacked/resources/app.asar
+      - run: node scripts/smoke-runtime.cjs release-windows/win-unpacked/DOM.exe
+      - run: node scripts/smoke-google-recognition.cjs release-windows/win-unpacked/DOM.exe
+      - run: node scripts/smoke-proxy-rotation.cjs release-windows/win-unpacked/DOM.exe
+      - run: node scripts/smoke-google-prompts.cjs release-windows/win-unpacked/DOM.exe
+      - run: node scripts/smoke-keep-alive-reading.cjs release-windows/win-unpacked/DOM.exe
+      - name: Checksum Windows installer
+        shell: pwsh
+        run: |
+          $installer = 'release-windows/DOM-v0.5.29-Windows-x64-Setup.exe'
+          if (!(Test-Path $installer)) { throw "Missing $installer" }
+          $digest = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
+          "$digest  DOM-v0.5.29-Windows-x64-Setup.exe" | Set-Content 'release-windows/SHA256SUMS-windows.txt' -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dom-v0.5.29-windows
+          path: |
+            release-windows/DOM-v0.5.29-Windows-x64-Setup.exe
+            release-windows/SHA256SUMS-windows.txt
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libxss1 apparmor
+      - name: Verify DOM identity and version
+        run: node -e "const p=require('./package.json');if(p.name!=='dom'||p.productName!=='DOM'||p.version!=='0.5.29'||p.build.appId!=='com.dom.desktop')throw Error('Wrong DOM application baseline')"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm run package:linux
+      - run: node scripts/check-package.cjs
+      - run: xvfb-run -a node scripts/smoke-runtime.cjs release-linux/linux-unpacked/dom
+      - run: xvfb-run -a node scripts/smoke-google-recognition.cjs release-linux/linux-unpacked/dom
+      - run: xvfb-run -a node scripts/smoke-proxy-rotation.cjs release-linux/linux-unpacked/dom
+      - run: xvfb-run -a node scripts/smoke-google-prompts.cjs release-linux/linux-unpacked/dom
+      - run: xvfb-run -a node scripts/smoke-keep-alive-reading.cjs release-linux/linux-unpacked/dom
+      - name: Checksum Linux packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-linux
+          sha256sum DOM-v0.5.29-linux-*.AppImage DOM-v0.5.29-linux-*.tar.gz > SHA256SUMS-linux.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dom-v0.5.29-linux
+          path: |
+            release-linux/*.AppImage
+            release-linux/*.tar.gz
+            release-linux/SHA256SUMS-linux.txt
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dom-v0.5.29-windows
+          path: dist/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: dom-v0.5.29-linux
+          path: dist/linux
+      - name: Verify matching version and artifact checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "0.5.29"
+          (cd dist/windows && sha256sum -c SHA256SUMS-windows.txt)
+          (cd dist/linux && sha256sum -c SHA256SUMS-linux.txt)
+      - name: Publish verified v0.5.29
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.5.29 >/dev/null 2>&1; then
+            echo "v0.5.29 is already published and immutable; artifact checks completed."
+            exit 0
+          fi
+          gh release create v0.5.29 \
+            dist/windows/*.exe dist/windows/SHA256SUMS-windows.txt \
+            dist/linux/*.AppImage dist/linux/*.tar.gz dist/linux/SHA256SUMS-linux.txt \
+            --target "$GITHUB_SHA" \
+            --title "DOM v0.5.29 - Fresh cycles and forty-second browsing workflow" \
+            --notes "DOM-only release based on v0.5.28. Each cycle clears browser cache, renderer memory cache, cookies and storage while keeping healthy proxy routing. A proxy is retained when normal Google results appear, even if the target is absent; country tiers, provider selection and ProxyScrape rate-limit recovery remain unchanged. Keep Alive visits the target for forty seconds, clicks an internal link, visits it for forty seconds, then clicks a random eligible external link and continues scrolling there until Stop or the next cycle. Keywords and target website survive restarts until deleted. Recognized site consent, including child frames, is accepted automatically; specialized Google prompt handling is preserved. Simultaneous keyword distribution and advanced progressive result recognition remain intact. Both native platform builds must pass unit, source, archive, startup, Google-recognition, proxy-rotation, consent/cache and full-page reading fixtures before publication. Live public proxies, Google changes and custom consent widgets remain environment-specific checks. Existing releases remain immutable."

@@ -43,11 +43,11 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             browser.view.setBounds({ x: 0, y: 0, width: 900, height: 600 });
             browser.session.protocol.handle('https', request => {
                 const url = new URL(request.url);
-                if (url.hostname !== 'reading.test') throw new Error('Keep Alive left its internal host: ' + request.url);
+                if (!['reading.test', 'outside.test'].includes(url.hostname)) throw new Error('Keep Alive left its internal host: ' + request.url);
                 const page = Number(url.pathname.split('/').at(-1));
-                visits.push({ page, at: Date.now() });
+                visits.push({ page, host: url.hostname, at: Date.now() });
                 const paragraphs = Array.from({ length: 14 }, (_, i) => `<p>Reading paragraph ${i}: follow the article calmly and continue.</p>`).join('');
-                return new Response(`<!doctype html><html><head><link rel="icon" href="data:,"><style>body{margin:24px;font:20px/1.8 sans-serif}p{margin:12px 0}</style></head><body><article><h1>Reading article ${page}</h1>${paragraphs}<a href="https://reading.test/article/${page + 1}">Read the next internal article</a><br><a href="https://outside.test/article">Visit another website</a></article></body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+                return new Response(`<!doctype html><html><head><link rel="icon" href="data:,"><style>body{margin:24px;font:20px/1.8 sans-serif}p{margin:12px 0}</style></head><body><article><h1>Reading article ${page}</h1>${paragraphs}<a href="https://reading.test/article/${page + 1}">Read the next internal article</a><br><a href="https://outside.test/article/3">Visit another website</a></article></body></html>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
             });
             global.__domReadingProbe = { manager, window, browser, visits };
             await browser.view.webContents.loadURL('https://reading.test/article/1');
@@ -55,7 +55,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         });
         const samples = [], started = Date.now();
         let visits, lastReportedPage = 1;
-        while (Date.now() - started < 345_000) {
+        while (Date.now() - started < 100_000) {
             const sample = await withinDeadline(application.evaluate(async () => {
                 const { browser, visits } = global.__domReadingProbe;
                 let document;
@@ -67,7 +67,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             if (sample.document) samples.push(sample.document);
             if (visits.length > 1) {
                 const dwell = visits.at(-1).at - visits.at(-2).at;
-                assert.ok(dwell >= 136_000, `Page ${visits.at(-2).page} was left after ${dwell} ms`);
+                assert.ok(dwell >= 40_000 && dwell <= 45_000, `Page ${visits.at(-2).page} was left after ${dwell} ms`);
                 if (visits.at(-1).page !== lastReportedPage) {
                     console.log(`Page ${visits.at(-2).page} dwell: ${dwell} ms`);
                     lastReportedPage = visits.at(-1).page;
@@ -87,7 +87,10 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             assert.ok(Math.max(...positions) >= bottom - 2, `Page ${page} did not reach its bottom`);
             assert.ok(positions.slice(Math.floor(positions.length / 2)).some(y => y <= 2), `Page ${page} did not return to its top`);
         }
-        await wait(2_500);
+        assert.deepEqual(visits.map(v => v.host), ['reading.test', 'reading.test', 'outside.test']);
+        await wait(42_000);
+        assert.equal(await application.evaluate(() => global.__domReadingProbe.visits.length), 3);
+        assert.equal(await application.evaluate(() => global.__domReadingProbe.browser.keepAliveEnabled), true);
         await application.evaluate(() => global.__domReadingProbe.manager.setBrowserKeepAlive(801, false));
         await wait(500);
         const stopped = await application.evaluate(async () => {

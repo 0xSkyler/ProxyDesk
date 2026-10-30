@@ -1,4 +1,4 @@
-# DOM v0.5.28
+# DOM v0.5.29
 
 > **Active application: DOM.** The GitHub repository name `ProxyDesk` is historical.
 > Develop from `main` and verify `package.json` identifies `dom` / `DOM`.
@@ -121,8 +121,9 @@ and its matching result is opened through the actual result-title click.
 Before each proxy cycle, DOM stops outgoing browser work, releases its page through
 a local blank document, and clears every selected browser’s HTTP cache, renderer
 memory cache and Cache Storage. Healthy proxy routing remains assigned throughout.
-Cleanup runs two browsers at a time, finishes before proxy fetching/searching starts, and retains cookies so
-Google’s accepted consent choice survives. A failed cleanup reports an error
+Cleanup runs two browsers at a time and finishes before proxy fetching/searching starts.
+It also clears cookies, local/session storage, service workers, authentication and code
+caches. The shell’s saved keyword and target inputs use a separate session and survive. A failed cleanup reports an error
 instead of starting searches with a cache that could be cleared late. Stop cancels
 the wait immediately.
 
@@ -136,8 +137,9 @@ Pass a packaged executable to run against the installed application’s code.
 ## Keep Alive scrolling
 
 Keep Alive spends forty seconds on each article, scrolling from the top to the
-bottom and back to the top, then clicking an internal article link. The same
-sequence repeats on the next article. Brief holds at both ends let native smooth
+bottom and back to the top, then clicking an internal article link. After another
+forty-second visit it clicks a random eligible external link and continues scrolling
+on that external page until the next cycle or Stop, without clicking more links. Brief holds at both ends let native smooth
 scrolling cover the whole page. Its height is refreshed to include lazy content.
 
 Actions run in bounded ten-second chunks that retain the page clock and resume
@@ -146,8 +148,8 @@ article starts a new forty-second interval. Google result-title clicks remain im
 
 Run `node scripts/smoke-keep-alive-reading.cjs` from a graphical desktop, optionally
 passing a packaged executable. The native check verifies two forty-second page
-visits, downward and upward scrolling to both ends, actual internal link clicks,
-and cancellation on the next page.
+visits, downward and upward scrolling to both ends, the internal/external link
+sequence, continued external scrolling and cancellation.
 
 ## Browser startup
 
@@ -161,10 +163,8 @@ Native initialization has a 15-second deadline per browser and a 60-second deadl
 for the whole preparation. A failed startup reports the cause and allows another
 Start instead of remaining at **Starting** indefinitely.
 
-Each new workspace starts with an empty memory partition. Recreated IDs reuse a
-partition only after its cleanup succeeds, keeping memory use bounded during
-normal resizing. DOM skips nonexistent legacy storage and bounds any migration
-cleanup. The two-worker limit applies only to preparation; all selected browsers
+Each workspace has its own isolated profile. At every cycle boundary its browsing
+data is cleared before a fresh search, while healthy proxy routing is retained. The two-worker limit applies only to preparation; all selected browsers
 still run their page monitoring, target clicks and Keep Alive concurrently.
 
 ## Simultaneous keywords
@@ -175,20 +175,15 @@ them simultaneously. Each subsequent cycle moves every browser to the next keywo
 and wraps at the end of the list. For example, three browsers with `first, second`
 run `first, second, first`, then `second, first, second`.
 
-A proxy stays assigned only if its browser opened the configured target page with a
-successful main-document response and had no Google CAPTCHA, connection failure or
-renderer failure during the outgoing cycle. Reaching Google, detecting a result,
-and attempting a click are insufficient. Target success is recorded at navigation
-commit without waiting for Ready or full-page loading.
+A proxy stays assigned when normal Google results were observed and the browser
+had no Google challenge or transport failure during the cycle. The target need not
+appear or open: an absent target alone does not fail a proxy. HTTP responses alone
+are not proof of normal results. Provider tier/country selection still applies.
 
-A Google CAPTCHA redirect or inline challenge disqualifies that proxy for the rest
-of the cycle, even if it recovers and later opens the target. The current session
-can still recover manually; replacement happens at the next cycle. Proxies that
-never open the target or fail later during Keep Alive are also replaced. Retained
-endpoints remain reserved across protocols, and all just-disqualified endpoints are
-excluded from replacement candidates. Each new cycle requires fresh target-opening
-proof. Health is tracked from browser navigation and failure events throughout the
-cycle, without separate Google validation requests.
+Challenges or failures to display Google results disqualify a proxy for replacement
+at the next cycle. Retained endpoints remain reserved across protocols, failed
+endpoints are excluded from replacements, and no connectivity/geolocation prechecks
+are introduced. Google's specialized consent/verification handling is preserved.
 
 All selected browsers still clear their caches before each cycle and start a fresh
 search for their next keyword. Healthy browsers keep their native proxy routing and
@@ -216,7 +211,7 @@ provider list while reserving retained endpoints and excluding just-failed ones.
 
 ### Windows download
 
-[Download DOM v0.5.28 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.28/DOM-v0.5.28-Windows-x64-Setup.exe)
+[Download DOM v0.5.29 for Windows (x64 installer)](https://github.com/0xSkyler/ProxyDesk/releases/download/v0.5.29/DOM-v0.5.29-Windows-x64-Setup.exe)
 
 The Windows workflow builds this installer on a native GitHub Windows runner,
 installs it silently into a clean directory, opens both the unpacked and installed
@@ -234,7 +229,7 @@ npm test
 npm run package:windows
 ```
 
-Output: `release-windows/DOM-v0.5.28-Windows-x64-Setup.exe`.
+Output: `release-windows/DOM-v0.5.29-Windows-x64-Setup.exe`.
 
 ### Linux build
 
@@ -257,14 +252,14 @@ Their license files are retained in `third-party/`.
 AppImage:
 
 ```sh
-chmod +x DOM-v0.5.28-linux-x86_64.AppImage
-./DOM-v0.5.28-linux-x86_64.AppImage
+chmod +x DOM-v0.5.29-linux-x86_64.AppImage
+./DOM-v0.5.29-linux-x86_64.AppImage
 ```
 
 On a machine without FUSE:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.28-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./DOM-v0.5.29-linux-x86_64.AppImage
 ```
 
 Run as a regular desktop user in an existing graphical session. X11/Wayland,
@@ -279,7 +274,7 @@ sandbox helper. CI's `--no-sandbox` flag is isolated to test runners.
 If a VPS graphics driver fails, opt into software rendering:
 
 ```sh
-DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.28-linux-x86_64.AppImage
+DOM_SOFTWARE_RENDERING=1 ./DOM-v0.5.29-linux-x86_64.AppImage
 ```
 
 Default rendering and all controls are unchanged. Do not blanket-disable GPU,
@@ -311,7 +306,8 @@ The crash restart rate remains bounded while an unavailable display stays unavai
 
 Enter the existing settings/keywords and click Start in the application. Keep the
 desktop session active. App restarts preserve the reference behavior: tasks do
-not restart automatically, and its input settings return to the original defaults.
+not restart automatically. Keywords and target website remain saved until deleted;
+other inputs keep their existing restart behavior.
 
 ```sh
 systemctl --user status dom
@@ -319,7 +315,7 @@ journalctl --user -u dom -n 50 --no-pager
 systemctl --user stop dom
 ```
 
-The version-bound `release/v0.5.28` workflow publishes DOM v0.5.28 only after
+The version-bound `release/v0.5.29` workflow publishes DOM v0.5.29 only after
 native Windows and Linux builds and their fixture checks succeed. Current `main`
 runs DOM identity and regression checks without automatically publishing a
 release. Historical version-bound release workflows do not run on main pushes.
@@ -379,9 +375,9 @@ with proxy, BrowserView, rendering and long-session regression evidence. Browser
 is retained to avoid an unverified UI/runtime migration. Chromium browser content
 is the dominant cost at high concurrency; eliminating bundled duplicate npm
 packages will not make 100 real pages inexpensive. Browser caches clear before
-each proxy cycle, while cookies retain Google’s consent choice. Scheduled task
+each proxy cycle together with cookies and browser storage. Scheduled task
 restart, browser pooling or concurrency reduction is not added.
 
 The shipped reference has no persistent settings / Save Settings control.
-This optimization preserves its defaults and React input behavior; it does not
-add a new settings workflow.
+DOM automatically saves only keywords and target website until they are deleted;
+there is no new Save Settings control and other defaults are unchanged.

@@ -306,11 +306,11 @@ test('tier selection retains proven successful proxies and only replaces unsucce
     const events = [], requests = [];
     const existing = new Map([
         [1, { proxy: { id:'old-1', host:'192.0.2.11', port:8080, countryCode:'PL' },
-            targetOpened:true, captchaSeen:false, failed:false }],
+            googleReached:true, targetOpened:true, captchaSeen:false, failed:false }],
         [2, { proxy: { id:'old-2', host:'192.0.2.12', port:8080, countryCode:'PL' },
             targetOpened:false, captchaSeen:false, failed:false }],
         [3, { proxy: { id:'old-3', host:'192.0.2.13', port:8080, countryCode:'US' },
-            targetOpened:true, captchaSeen:false, failed:false }]
+            googleReached:true, targetOpened:true, captchaSeen:false, failed:false }]
     ]);
     const browser = {
         getProxyRotationState: id => existing.get(id),
@@ -353,7 +353,7 @@ test('an all-successful tier cycle retains proxies without fetching new ones', a
     const browser = {
         getProxyRotationState: id => ({ proxy: { id:'retained-'+id,
             host:'192.0.2.'+id, port:8080, countryCode:'BD' },
-            targetOpened:true, captchaSeen:false, failed:false }),
+            googleReached:true, targetOpened:true, captchaSeen:false, failed:false }),
         beginProxyCycle: id => events.push(['retain',id]),
         cancelMeasurementSession() {}, setBrowserKeepAlive() {}, prepareCycleDocument: async () => {},
         assignProxy: async () => { throw new Error('successful proxy routing must remain unchanged'); },

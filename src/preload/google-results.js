@@ -12,7 +12,7 @@ function inspectSiteCookieConsent() {
         /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(location.hostname)) return null;
     const clean = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
     const positive = /^(accept all(?: cookies)?|accept (?:all )?cookies|accept|allow all(?: cookies)?|allow cookies|i agree|yes,? i agree|agree and continue|agree|accept and continue|accept & continue|ok|okay|got it|alle akzeptieren|alle cookies akzeptieren|tout accepter|accepter tout|aceptar todas?|accetta tutti|aceitar todos|সব গ্রহণ করুন)$/i;
-    const contextWords = /cook(?:ie|ies)|consent|tracking|privacy preference|personal data|gdpr|donn[eé]es personnelles|datenschutz|galletas/i;
+    const contextWords = /cook(?:ie|ies)|consent|tracking|privacy preference|personal data|terms and conditions|terms of use|data processing|gdpr|donn[eé]es personnelles|datenschutz|galletas/i;
     const banner = '[role="dialog"],dialog,[aria-modal="true"],[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[id*="privacy" i],[class*="privacy" i],[id*="onetrust" i],[class*="onetrust" i]';
     for (const button of document.querySelectorAll('button,input[type="button"],input[type="submit"],[role="button"]')) {
         const label = clean(button.innerText || button.textContent || button.value || button.getAttribute('aria-label'));
@@ -584,7 +584,15 @@ function installGoogleResultObserver(target, query = '', publish = () => {}) {
 }
 
 if (typeof process !== 'undefined' && process.type === 'renderer') {
-    const { ipcRenderer } = require('electron');
+    const { ipcRenderer, webFrame } = require('electron');
+    ipcRenderer.on('dom:clear-renderer-cache', (_event, requestId) => {
+        try {
+            webFrame.clearCache();
+            ipcRenderer.send('dom:renderer-cache-cleared', { requestId });
+        } catch (error) {
+            ipcRenderer.send('dom:renderer-cache-cleared', { requestId, error: error.message });
+        }
+    });
     let active = null;
     // Active on every top-level website, not just Google.
     if (window === window.top && /^https?:$/.test(location.protocol)) {

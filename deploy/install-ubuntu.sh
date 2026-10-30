@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Run from the Ubuntu desktop terminal as the account that will own the app.
 # Root privileges are used only for packages, /opt and sandbox installation.
-release_tag=v0.5.28
+release_tag=v0.5.29
 software=0
 if [[ ${1:-} == --software-rendering ]]; then software=1; shift; fi
 if (( $# )); then echo 'Usage: install-ubuntu.sh [--software-rendering]' >&2; exit 2; fi
@@ -18,7 +18,7 @@ sudo apt-get update
 sudo apt-get install -y curl ca-certificates libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 xdg-utils
 
 work=$(mktemp -d -t dom-install-XXXXXXXX)
-artifact=DOM-v0.5.28-linux-x64.tar.gz
+artifact=DOM-v0.5.29-linux-x64.tar.gz
 base="https://github.com/0xSkyler/ProxyDesk/releases/download/$release_tag"
 curl --fail --location --retry 3 "$base/$artifact" --output "$work/$artifact"
 curl --fail --location --retry 3 "$base/SHA256SUMS-linux.txt" --output "$work/SHA256SUMS"

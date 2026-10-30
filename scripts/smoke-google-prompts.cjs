@@ -183,6 +183,12 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                     if (request.url === '/cached.svg') {
                         imageRequests++; response.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' });
                         response.end('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="blue"/></svg>');
+                    } else if (request.url === '/frame-consent') {
+                        response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+                        response.end(html('<div role="dialog"><p>Terms and conditions for data processing</p><button onclick="document.body.dataset.accepted=1;this.parentElement.remove()">I agree</button></div>') + '</body></html>');
+                    } else if (request.url === '/with-consent-frame') {
+                        response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
+                        response.end(html('<iframe src="/frame-consent"></iframe>') + '</body></html>');
                     } else if (request.url === '/cookie-banner') {
                         response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
                         response.end(html('<div role="dialog" id="site-cookie-consent"><h1>Cookie preferences</h1><p>This website uses cookies to store your preferences.</p><button onclick="document.cookie=&#39;siteAccepted=1;path=/&#39;;document.getElementById(&#39;site-cookie-consent&#39;).remove()">Accept all</button></div>') + '</body></html>');
@@ -218,8 +224,24 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 if (!restoredKeys.includes('cycle-test')) throw new Error('Browser recreation lost Cache Storage');
                 const persisted = await cookies(restored);
                 if (persisted.accepted !== '1' || persisted.siteAccepted !== '1') throw new Error('Browser recreation lost consent cookies');
+                await restored.view.webContents.executeJavaScript("localStorage.setItem('cycle-marker','old');sessionStorage.setItem('cycle-marker','old')");
+                await manager.prepareCycleDocument(630);
+                await restored.view.webContents.loadURL(origin + '/five');
+                const cleared = await restored.view.webContents.executeJavaScript("(async()=>({keys:await caches.keys(),local:localStorage.getItem('cycle-marker'),session:sessionStorage.getItem('cycle-marker')}))()");
+                const clearedCookies = await cookies(restored);
+                if (cleared.keys.includes('cycle-test') || cleared.local !== null || cleared.session !== null || clearedCookies.accepted || clearedCookies.siteAccepted)
+                    throw new Error('The cycle did not clear cookies and all browser storage');
+                if (imageRequests !== 2) throw new Error('HTTP cache survived the new cycle: ' + imageRequests);
+                await restored.view.webContents.loadURL(origin + '/with-consent-frame');
+                let frameAccepted = false;
+                for (let attempt = 0; attempt < 40 && !frameAccepted; attempt++) {
+                    const frame = restored.view.webContents.mainFrame.framesInSubtree.find(frame => frame.url.endsWith('/frame-consent'));
+                    frameAccepted = frame && await frame.executeJavaScript('document.body.dataset.accepted === "1"').catch(() => false);
+                    if (!frameAccepted) await pause(100);
+                }
+                if (!frameAccepted) throw new Error('Site consent in the child frame was not accepted');
                 stats.cache = { before: 1, after: imageRequests, cacheStorageRetained: true, consentCookieRetained: true,
-                    siteConsentAccepted: true, persistentAfterRecreation: true };
+                    siteConsentAccepted: true, childFrameConsentAccepted: true, persistentAfterRecreation: true, clearedAtCycleBoundary: true };
                 return stats;
             } finally {
                 for (const timer of timers) clearTimeout(timer);

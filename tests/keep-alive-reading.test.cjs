@@ -36,16 +36,16 @@ async function finish(reading, hop = true, deadline = reading.time + 10_000) {
     assert.fail('Reading did not finish within its expected time');
 }
 
-test('each new article scrolls slowly for at least two minutes before following an internal link', async () => {
+test('each article scrolls down/up with pauses before clicking at forty seconds', async () => {
     const reading = reader();
     for (let page = 0; page < 2; page++) {
         const started = reading.time;
         for (let i = 0; i < 3; i++) assert.equal((await reading.run()).reading, true);
         assert.equal(reading.clicks.length, page, 'bounded chunks cannot bypass reading time');
-        const result = await finish(reading, true, started + 155_000);
+        const result = await finish(reading, true, started + 42_000);
         assert.equal(result.clickedUrl, 'https://reading.test/article/' + (page + 2));
         const dwell = reading.clicks[page].at - started;
-        assert.ok(dwell >= 136_000 && dwell <= 155_000, 'each page must be slow enough to read');
+        assert.ok(dwell >= 40_000 && dwell <= 42_000, 'each page must be slow enough to read');
         const positions = reading.scrolls.filter(v => v.page.endsWith('/' + (page + 1)));
         assert.ok(positions.some(v => v.to > v.from), 'must scroll downward');
         assert.ok(positions.some(v => v.to < v.from), 'must scroll upward');
@@ -55,43 +55,33 @@ test('each new article scrolls slowly for at least two minutes before following 
     assert.ok(reading.scrolls.length > 20);
 });
 
-test('long article takes proportionally longer instead of scrolling faster', async () => {
-    const reading = reader(900);
-    reading.content.scrollHeight = 18_000; // 17,200 scrollable pixels
-    for (let i = 0; i < 3; i++) assert.equal((await reading.run()).reading, true);
-    assert.equal(reading.clicks.length, 0);
-    const result = await finish(reading, true, 475_000);
+test('long articles complete their full down/up visit in forty seconds', async () => {
+    const reading = reader(900); reading.content.scrollHeight = 18_000;
+    const result = await finish(reading, true, 42_000);
     assert.equal(result.clickedUrl, 'https://reading.test/article/2');
-    assert.ok(reading.clicks[0].at >= 445_000, 'a long page needs extra reading time');
+    assert.ok(reading.clicks[0].at >= 40_000 && reading.clicks[0].at <= 41_000);
     assert.equal(Math.max(...reading.scrolls.map(v => v.to)), 17_200);
     assert.equal(reading.scrolls.at(-1).to, 0);
-    const movements = reading.scrolls.filter(v => Math.abs(v.to - v.from) > 1);
-    for (let i = 1; i < movements.length; i++) {
-        const prev = movements[i - 1], current = movements[i];
-        const seconds = (current.at - prev.at) / 1_000;
-        assert.ok(Math.abs(current.to - prev.to) <= seconds * 80 + 1.5,
-            'Keep Alive must never move faster than eighty pixels per second');
-    }
 });
 
 test('scroll-only Keep Alive reads without following a link', async () => {
     const reading = reader();
     assert.equal((await reading.run(false)).reading, true);
     assert.equal((await reading.run(false)).reading, true);
-    assert.deepEqual(Object.keys(await finish(reading, false, 155_000)), []);
+    assert.deepEqual(Object.keys(await finish(reading, false, 42_000)), []);
     assert.equal(reading.clicks.length, 0);
-    assert.ok(reading.time >= 136_000);
+    assert.ok(reading.time >= 40_000);
 });
 
 test('a stalled navigation cannot trigger a second click on the old document', async () => {
     const reading = reader(120, false);
-    await reading.run(); await reading.run(); await finish(reading, true, 155_000);
+    await reading.run(); await reading.run(); await finish(reading, true, 42_000);
     reading.advance(1_500);
     assert.equal((await reading.run()).reading, true);
     assert.equal(reading.clicks.length, 1);
 });
 
-test('lazy-loaded sections increase reading time and remain fully visible', async () => {
+test('lazy-loaded sections remain fully visited within the forty-second window', async () => {
     const reading = reader();
     await reading.run();
     reading.content.scrollHeight = 9_000;
@@ -99,48 +89,34 @@ test('lazy-loaded sections increase reading time and remain fully visible', asyn
     assert.equal(result.clickedUrl, 'https://reading.test/article/2');
     assert.equal(Math.max(...reading.scrolls.map(v => v.to)), 8_200);
     assert.equal(reading.scrolls.at(-1).to, 0);
-    assert.ok(reading.clicks[0].at >= 200_000);
+    assert.ok(reading.clicks[0].at >= 40_000 && reading.clicks[0].at <= 41_000);
 });
 
 test('mid-article entry restarts gently at the top before the slow pass', async () => {
     const reading = reader();
     reading.window.scrollY = 400;
-    await finish(reading, true, 155_000);
+    await finish(reading, true, 42_000);
     assert.equal(reading.clicks.length, 1);
     assert.equal(reading.scrolls[0].to, 0);
     assert.equal(Math.max(...reading.scrolls.map(v => v.to)), 800);
     assert.equal(reading.scrolls.at(-1).to, 0);
 });
 
-test('reading pauses for at least three seconds at each third on both passes', async () => {
-    const reading = reader();
-    const result = await finish(reading, false, 155_000);
-    assert.deepEqual(Object.keys(result), []);
-    const positions = reading.scrolls;
-    for (const [checkpoint, label] of [
-        [800 / 3, 'one-third'], [1_600 / 3, 'two-thirds']
-    ]) {
-        const stops = positions.filter(v => Math.abs(v.to - checkpoint) < 0.15);
-        assert.equal(stops.length, 2, label + ' should be visited once on each direction');
-        for (const stop of stops) {
-            const later = positions.find(v => v.at > stop.at);
-            assert.ok(later && later.at - stop.at >= 3_000,
-                label + ' reading break must last at least three seconds');
-        }
-    }
-    assert.ok(reading.time >= 136_000);
+test('the forty-second visit includes pauses at the top and bottom', async () => {
+    const reading = reader(); await finish(reading, false, 42_000);
+    const moves = reading.scrolls;
+    assert.ok(moves[0].at >= 2_000);
+    const bottom = moves.find(v => v.to === 800);
+    const next = moves.find(v => v.at > bottom.at);
+    assert.ok(next.at - bottom.at >= 2_000);
+    assert.equal(moves.at(-1).to, 0);
+    assert.ok(reading.time >= 40_000 && reading.time <= 41_000);
 });
 
-test('a throttled timer never causes a sudden large jump when scrolling resumes', async () => {
-    const reading = reader();
-    await reading.run();
-    const before = reading.scrolls.at(-1);
-    reading.advance(50_000);
-    await reading.run();
-    const after = reading.scrolls.find(v => v.at > before.at);
-    if (after && Math.abs(after.to - before.to) > 1)
-        assert.ok(Math.abs(after.to - before.to) <= 18,
-            'an inactive browser cannot catch up with a large jump');
+test('a throttled page does not produce repeated clicks from the old document', async () => {
+    const reading = reader(120, false); await reading.run(); reading.advance(50_000);
+    await reading.run(); await reading.run();
+    assert.equal(reading.clicks.length, 1);
 });
 
 test('an unfinished reading chunk stays enabled even with the manual one-page limit', async () => {

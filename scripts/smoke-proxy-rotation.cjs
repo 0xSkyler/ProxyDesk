@@ -72,8 +72,10 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                     traces.set(id, trace); managed.view.setBounds({ x: 0, y: 0, width: 920, height: 640 });
                     const setProxy = managed.session.setProxy.bind(managed.session);
                     const close = managed.session.closeAllConnections.bind(managed.session);
-                    managed.session.clearCache = () => { trace.cacheClears++; throw new Error('Cache deletion forbidden'); };
-                    managed.session.clearStorageData = () => { trace.storageClears++; throw new Error('Storage deletion forbidden'); };
+                    const clearCache = managed.session.clearCache.bind(managed.session);
+                    managed.session.clearCache = () => { trace.cacheClears++; return clearCache(); };
+                    const clearStorage = managed.session.clearStorageData.bind(managed.session);
+                    managed.session.clearStorageData = () => { trace.storageClears++; return clearStorage(); };
                     managed.session.setProxy = options => { trace.routingChanges++; return setProxy(options); };
                     managed.session.closeAllConnections = () => { trace.connectionResets++; return close(); };
                     managed.view.webContents.on('did-navigate', (_event, url) => {
@@ -86,7 +88,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                         if (url.hostname === 'www.google.com') {
                             if (url.pathname === '/sorry/index') return new Response('<!doctype html><html><body><form id="captcha-form">Google CAPTCHA</form></body></html>', { status: 429, headers: { 'Content-Type': 'text/html' } });
                             trace.keywords.push(url.searchParams.get('q'));
-                            if (managed.state.proxy?.host === '127.0.0.3') return Response.error();
+                            if (managed.state.proxy?.host === '127.0.0.3' || (managed.state.proxy?.host === '127.0.0.5' && trace.failGoogle)) return Response.error();
                             const endpoint = managed.state.proxy?.host;
                             if (endpoint === '127.0.0.2' && !trace.recovered)
                                 return new Response('<!doctype html><html><body><form id="captcha-form" action="/sorry/"><h1>Google CAPTCHA</h1></form></body></html>', { headers: { 'Content-Type': 'text/html' } });
@@ -116,10 +118,10 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 await until(() => manager.getProxyRotationState(902).targetOpened, 'CAPTCHA recovery target click');
                 if (!manager.getProxyRotationState(902).captchaSeen) throw new Error('Manual recovery erased the CAPTCHA flag');
 
-                // A later target navigation failure must invalidate a proxy
-                // that opened its first article successfully.
-                traces.get(905).failTarget = true;
-                void manager.get(905).view.webContents.loadURL('https://appareldiary.com/article/905/failed').catch(() => {});
+                // A later Google navigation failure must invalidate a proxy
+                // that previously displayed results and opened its target.
+                traces.get(905).failGoogle = true;
+                void manager.get(905).view.webContents.loadURL('https://www.google.com/search?q=second&num=10&hl=en').catch(() => {});
                 await until(() => manager.getProxyRotationState(905).failed, 'Failure after target opened');
                 const first = ids.map(id => ({ id, ...manager.getProxyRotationState(id), proxy: manager.get(id).state.proxy.host,
                     routingChanges: traces.get(id).routingChanges, connectionResets: traces.get(id).connectionResets }));
@@ -127,14 +129,14 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 if (!traces.get(901).targetBeforeReady) throw new Error('Target success waited for Ready');
                 const targetsBeforeSecond = new Map(ids.map(id => [id, traces.get(id).targets]));
                 await automation.runNow();
-                await until(() => !automation.getState().cycleInProgress && ids.every(id => manager.getProxyRotationState(id).targetOpened &&
-                    traces.get(id).targets > targetsBeforeSecond.get(id)), 'Second cycle');
+                await until(() => !automation.getState().cycleInProgress && ids.every(id => manager.getProxyRotationState(id).googleReached &&
+                    (id === 904 || traces.get(id).targets > targetsBeforeSecond.get(id))), 'Second cycle');
                 const healthy = first[0], trace = traces.get(901), current = manager.get(901);
                 if (current.state.proxy.host !== healthy.proxy || trace.routingChanges !== healthy.routingChanges ||
-                    trace.connectionResets !== healthy.connectionResets) throw new Error('Qualified browser changed its routing or connections');
+                    trace.connectionResets !== healthy.connectionResets + 1) throw new Error('Qualified browser changed its routing or connections');
                 const nativeRoute = await current.session.resolveProxy('https://www.google.com');
                 if (!nativeRoute.includes(healthy.proxy + ':8111')) throw new Error('Native route did not retain the qualified proxy: ' + nativeRoute);
-                for (const [index, id] of ids.slice(1).entries()) {
+                for (const [index, id] of ids.filter(id => id !== 901 && id !== 904).entries()) {
                     const expected = '127.0.0.' + (index + 7);
                     if (manager.get(id).state.proxy.host !== expected) throw new Error(`Browser ${id} did not receive replacement ${expected}`);
                     if (manager.getProxyRotationState(id).captchaSeen || manager.getProxyRotationState(id).failed)
@@ -145,22 +147,22 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
                 const second = ids.map(id => ({ id, proxy: manager.get(id).state.proxy.host, keyword: traces.get(id).keywords.at(-1) }));
                 if (second.map(r => r.keyword).join(',') !== expectedKeywords(2)) throw new Error('Second-cycle keywords did not advance: ' + JSON.stringify(second));
                 const secondStatus = automation.getState();
-                if (secondStatus.retainedBrowsers !== 1 || secondStatus.replacedBrowsers !== 5 || secondStatus.assignedBrowsers !== ids.length)
+                if (secondStatus.retainedBrowsers !== 2 || secondStatus.replacedBrowsers !== 4 || secondStatus.assignedBrowsers !== ids.length)
                     throw new Error('Second-cycle retention counters are incorrect');
                 const targetsBeforeThird = new Map(ids.map(id => [id, traces.get(id).targets]));
                 await automation.runNow();
-                await until(() => !automation.getState().cycleInProgress && ids.every(id => manager.getProxyRotationState(id).targetOpened &&
-                    traces.get(id).targets > targetsBeforeThird.get(id)), 'Third cycle');
+                await until(() => !automation.getState().cycleInProgress && ids.every(id => manager.getProxyRotationState(id).googleReached &&
+                    (id === 904 || traces.get(id).targets > targetsBeforeThird.get(id))), 'Third cycle');
                 if (apiCalls !== 2) throw new Error('All-qualified cycle called the unavailable API');
                 const third = ids.map(id => ({ id, proxy: manager.get(id).state.proxy.host, keyword: traces.get(id).keywords.at(-1), cacheClears: traces.get(id).cacheClears }));
                 if (third.map(r => r.keyword).join(',') !== expectedKeywords(3)) throw new Error('Third-cycle keywords did not advance');
-                if (third.some((row, index) => row.proxy !== second[index].proxy || row.cacheClears !== 0 || traces.get(row.id).storageClears !== 0))
-                    throw new Error('All-qualified cycle changed routing or deleted cache/storage');
+                if (third.some((row, index) => row.proxy !== second[index].proxy || row.cacheClears !== 3 || traces.get(row.id).storageClears !== 3))
+                    throw new Error('All-qualified cycle changed routing or failed to clear cycle data');
                 if (automation.getState().retainedBrowsers !== ids.length || automation.getState().replacedBrowsers !== 0)
                     throw new Error('All-qualified retention counters are incorrect');
                 return { apiCalls, first, second, third, healthyRoutingUnchanged: true, allHealthyApiSkipped: true,
-                    captchaRecoveredButReplaced: true, captchaRedirectReplaced: true, googleOnlyReplaced: true,
-                    failureAfterTargetReplaced: true, targetOpenedBeforeReady: true, cachePreservedEveryCycle: true, exactKeywordRotation: true };
+                    captchaRecoveredButReplaced: true, captchaRedirectReplaced: true, googleOnlyRetained: true,
+                    failureAfterTargetReplaced: true, targetOpenedBeforeReady: true, dataClearedEveryCycle: true, exactKeywordRotation: true };
             } finally {
                 automation.stop(); await manager.destroyAll(); window.destroy();
                 server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

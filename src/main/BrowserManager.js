@@ -15,7 +15,7 @@ const electron_1 = require("electron");
 const { join } = require('node:path');
 const constants_1 = require("../shared/constants");
 const seo_1 = require("../shared/seo");
-const { inspectGooglePrompt, recognizeGoogleResults, installGoogleResultObserver } = require('../preload/google-results');
+const { inspectSiteCookieConsent, installSiteCookieConsentObserver, inspectGooglePrompt, recognizeGoogleResults, installGoogleResultObserver } = require('../preload/google-results');
 const Logger_1 = require("./Logger");
 const { withTimeout, waitForPreparation, preparationCancelled } = require("./runtime");
 /**
@@ -198,6 +198,20 @@ class BrowserManager extends node_events_1.EventEmitter {
     wireEvents(managed, options) {
         const { view, id } = managed;
         const wc = view.webContents;
+        wc.on('did-frame-finish-load', () => {
+            for (const frame of wc.mainFrame?.framesInSubtree ?? []) {
+                const main = wc.mainFrame;
+                if (frame === main || (frame.processId === main.processId && frame.routingId === main.routingId)) continue;
+                const script = `(() => { if (window.__domSiteCookieConsentWatcher) return;
+                    const inspectSiteCookieConsent = ${inspectSiteCookieConsent.toString()};
+                    const installSiteCookieConsentObserver = ${installSiteCookieConsentObserver.toString()};
+                    installSiteCookieConsentObserver();
+                    addEventListener('pagehide', () => window.__domSiteCookieConsentWatcher?.stop(), { once: true });
+                })()`;
+                try { void frame.executeJavaScript(script).catch(() => undefined); }
+                catch { /* A consent frame may disappear during navigation. */ }
+            }
+        });
         // Treat "loading" as main-document readiness, not as "every network
         // request on the page has finished". Modern sites can keep requests open
         // indefinitely; DOM automation must not be blocked by those background
@@ -224,6 +238,14 @@ class BrowserManager extends node_events_1.EventEmitter {
                     sender.processId !== main.processId || sender.routingId !== main.routingId))) return;
             } catch {
                 // A queued handshake can outlive its render frame on Stop.
+                return;
+            }
+            if (channel === 'dom:renderer-cache-cleared') {
+                const request = managed.rendererCacheRequest;
+                if (request && payload?.requestId === request.requestId) {
+                    if (payload.error) request.reject(new Error(payload.error));
+                    else request.resolve();
+                }
                 return;
             }
             if (channel === 'dom:site-cookie-consent-click') {
@@ -333,9 +355,8 @@ class BrowserManager extends node_events_1.EventEmitter {
             // for Ready or adding a separate proxy-validation request.
             try {
                 const parsed = new URL(url);
-                if (managed.state.proxy && httpResponseCode >= 100 && httpResponseCode < 600 &&
-                    /(^|\.)google\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/i.test(parsed.hostname))
-                    managed.proxyHealth.googleReached = true;
+                // Only observed normal results prove Google success; an HTTP
+                // response alone may be a challenge, error or empty document.
                 const config = managed.googleConfig;
                 // A visible result or an attempted click is insufficient: the
                 // target document must actually commit a successful response.
@@ -360,7 +381,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             if (errorCode === -3)
                 return; // -3 = ERR_ABORTED (e.g. user navigated away mid-load)
             if (managed.state.proxy && /^https?:\/\//i.test(_url) &&
-                (isMainFrame || /ERR_PROXY_|ERR_TUNNEL_CONNECTION_FAILED/.test(errorDescription))) managed.proxyHealth.failed = true;
+                ((isMainFrame && isGoogleSearchResultsUrl(_url)) || /ERR_PROXY_|ERR_TUNNEL_CONNECTION_FAILED/.test(errorDescription))) managed.proxyHealth.failed = true;
             if (!isMainFrame) return;
             this.updateState(managed, {
                 loading: false,
@@ -515,6 +536,30 @@ class BrowserManager extends node_events_1.EventEmitter {
             await waitForPreparation(closed, 15_000, signal,
                 `Browser ${id} could not close its outgoing page before the next cycle.`);
         } finally { wc.removeListener('did-navigate', navigated); }
+        // The shell/settings use a different session. Clear only this browser's
+        // profile after its outgoing document and popups have been released.
+        await waitForPreparation(Promise.all([
+            managed.session.clearStorageData(),
+            managed.session.clearCache(),
+            managed.session.closeAllConnections(),
+            managed.session.clearAuthCache?.(),
+            managed.session.clearCodeCaches?.({})
+        ]), 15_000, signal, `Browser ${id} data clearing timed out before the next cycle.`);
+        wc.clearHistory?.();
+        await this.clearCycleRendererCache(managed, signal);
+    }
+    async clearCycleRendererCache(managed, signal) {
+        managed.rendererCacheSequence = (managed.rendererCacheSequence || 0) + 1;
+        const requestId = `${managed.id}:${managed.rendererCacheSequence}`;
+        let resolve, reject;
+        const work = new Promise((done, fail) => { resolve = done; reject = fail; });
+        managed.rendererCacheRequest = { requestId, resolve, reject };
+        try {
+            managed.view.webContents.send('dom:clear-renderer-cache', requestId);
+            await waitForPreparation(work, 15_000, signal, `Browser ${managed.id} renderer cache clearing timed out.`);
+        } finally {
+            if (managed.rendererCacheRequest?.requestId === requestId) managed.rendererCacheRequest = null;
+        }
     }
     async navigate(id, url) {
         const managed = this.get(id);
@@ -1294,6 +1339,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             throw new Error(`Controlled Keep Alive requires exact host ${normalizedHost}; browser is on ${currentHost || 'unknown'}.`);
         }
         this.cancelKeepAliveAction(managed);
+        managed.keepAliveStage = 0;
         this.ensureKeepAliveTimer();
         managed.keepAliveGeneration += 1;
         managed.controlledKeepAliveHost = normalizedHost;
@@ -1328,6 +1374,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         this.keepAliveTimer = setInterval(() => this.tickKeepAlive(), 500);
     }
     cancelKeepAliveAction(managed) {
+        managed.keepAlivePendingNavigation = null;
         const wc = managed.view.webContents;
         if (!wc.isDestroyed()) {
             void wc.executeJavaScript('window.__domKeepAliveController?.abort(); delete window.__domKeepAliveReading;', true).catch(() => undefined);
@@ -1361,6 +1408,7 @@ class BrowserManager extends node_events_1.EventEmitter {
         }
         if (resetHops) {
             managed.keepAliveHops = 0;
+            managed.keepAliveStage = 0;
             managed.keepAliveVisited.clear();
             const currentUrl = managed.view.webContents.getURL();
             if (currentUrl)
@@ -1393,6 +1441,7 @@ class BrowserManager extends node_events_1.EventEmitter {
             }
             if (resetHops) {
                 managed.keepAliveHops = 0;
+                managed.keepAliveStage = 0;
                 managed.keepAliveVisited.clear();
                 const currentUrl = managed.view.webContents.getURL();
                 if (currentUrl)
@@ -1483,8 +1532,18 @@ class BrowserManager extends node_events_1.EventEmitter {
     async runKeepAliveAction(managed, generation) {
         const wc = managed.view.webContents;
         const pagesVisited = managed.keepAliveHops + 1;
+        let stage = managed.keepAliveStage ?? 0;
+        const pending = managed.keepAlivePendingNavigation;
+        if (pending) {
+            if (wc.getURL() === pending.from && Date.now() - pending.at < 8_500) { managed.keepAliveNextAt = Date.now() + 250; return; }
+            if (wc.getURL() !== pending.from) {
+                stage = managed.keepAliveStage = pending.stage;
+                managed.keepAlivePendingNavigation = null;
+                if (stage === 2) managed.controlledKeepAliveHost = null;
+            } else managed.keepAlivePendingNavigation = null;
+        }
         const controlled = managed.controlledKeepAliveContinuous && Boolean(managed.controlledKeepAliveHost);
-        const canHop = controlled || (this.keepAliveFollowLinks && pagesVisited < this.keepAliveMaxHops);
+        const canHop = stage < 2 && (controlled || (this.keepAliveFollowLinks && pagesVisited < this.keepAliveMaxHops));
         try {
             if (controlled && managed.controlledKeepAliveHost) {
                 let currentHost = '';
@@ -1501,7 +1560,8 @@ class BrowserManager extends node_events_1.EventEmitter {
                     throw new Error(`Keep Alive left controlled host ${managed.controlledKeepAliveHost}; current host is ${currentHost || 'unknown'}.`);
                 }
             }
-            const actionPromise = wc.executeJavaScript(buildKeepAliveActionScript(canHop, Array.from(managed.keepAliveVisited), managed.controlledKeepAliveHost ?? undefined), true);
+            const fromUrl = wc.getURL();
+            const actionPromise = wc.executeJavaScript(buildKeepAliveActionScript(canHop, Array.from(managed.keepAliveVisited), managed.controlledKeepAliveHost ?? undefined, stage === 1 ? 'external' : 'internal'), true);
             const result = await withTimeout(
                 actionPromise,
                 this.keepAliveActionTimeoutMs, () => {
@@ -1518,7 +1578,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 managed.keepAliveNextAt = Date.now() + 250;
                 return;
             }
-            if (!controlled && pagesVisited >= this.keepAliveMaxHops) {
+            if (!controlled && stage < 2 && pagesVisited >= this.keepAliveMaxHops) {
                 managed.keepAliveEnabled = false;
                 this.updateState(managed, {
                     lastKeepAliveAt: completedAt,
@@ -1531,7 +1591,7 @@ class BrowserManager extends node_events_1.EventEmitter {
                 return;
             }
             if (!canHop || !result.clickedUrl) {
-                if (controlled) {
+                if (controlled || stage >= 2) {
                     managed.keepAliveNextAt = Date.now() + 2_000;
                     this.updateState(managed, {
                         lastKeepAliveAt: completedAt,
@@ -1554,9 +1614,10 @@ class BrowserManager extends node_events_1.EventEmitter {
                 });
                 return;
             }
+            managed.keepAlivePendingNavigation = { from: fromUrl, stage: stage + 1, at: Date.now() };
             managed.keepAliveVisited.add(result.clickedUrl);
             managed.keepAliveHops += 1;
-            managed.keepAliveNextAt = Date.now() + 1_500;
+            managed.keepAliveNextAt = Date.now() + 250;
             this.updateState(managed, {
                 keepAliveEnabled: true,
                 keepAliveHops: managed.keepAliveHops,
@@ -1582,7 +1643,7 @@ class BrowserManager extends node_events_1.EventEmitter {
     }
 }
 exports.BrowserManager = BrowserManager;
-function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
+function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost, linkMode = 'internal') {
     return `(async () => {
     window.__domKeepAliveController?.abort();
     const controller = new AbortController();
@@ -1590,6 +1651,7 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     const signal = controller.signal;
     signal.addEventListener('abort', () => window.scrollTo?.({ top: window.scrollY || 0, behavior: 'instant' }), { once: true });
     try {
+    const linkMode = ${JSON.stringify(linkMode)};
     const visited = new Set(${JSON.stringify(visitedUrls)});
     const allowedHost = ${JSON.stringify(allowedHost?.toLowerCase() ?? '')};
     const wait = (ms) => new Promise((resolve, reject) => {
@@ -1607,101 +1669,36 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
     );
     const maxScroll = () => Math.max(0, pageHeight() - window.innerHeight);
 
-    // Control reading speed by pixels rather than finishing every article
-    // in the same fixed 62 seconds. A longer page needs more time, not faster
-    // motion. The state survives each bounded DOM action and dynamic page growth.
+    // A complete down/up visit, including pauses, lasts forty seconds.
+    // Short chunks keep Stop/rotation responsive and preserve live navigation.
     const pageKey = () => typeof location === 'undefined' ? '' : String(location.href).split('#')[0];
     const now = performance.now();
     let reading = window.__domKeepAliveReading;
     if (!reading || reading.page !== pageKey()) {
-      const initialDistance = maxScroll();
-      reading = { page: pageKey(), startedAt: now, phase: 'top',
-        phaseAt: now, lastAt: now, position: 0, pauseIndex: 0,
-        speed: Math.max(1, Math.min(80, initialDistance / 60)) };
+      reading = { page: pageKey(), startedAt: now, phase: 'top', position: 0 };
       window.__domKeepAliveReading = reading;
-      // Start each article at its beginning, even if the browser landed midway.
       if (Math.abs(window.scrollY || 0) > 1) window.scrollTo({ top: 0, behavior: 'instant' });
     }
     if (reading.clickedAt != null && now - reading.clickedAt < 8_500) return { reading: true };
     reading.clickedAt = undefined;
     const deadline = performance.now() + 10_000;
     while (performance.now() < deadline) {
-      if (reading.page !== pageKey()) return { reading: true };
-      const tickAt = performance.now();
-      // A throttled/backgrounded tab cannot jump an entire section on resume.
-      const dt = Math.min(200, Math.max(0, tickAt - reading.lastAt));
-      reading.lastAt = tickAt;
+      if (signal.aborted || reading.page !== pageKey()) return { reading: true };
+      const elapsed = performance.now() - reading.startedAt;
       const bottom = maxScroll();
-      // At least sixty seconds per direction on short pages. Long pages
-      // are limited to eighty pixels per second, even after lazy loading.
-      reading.speed = Math.max(1, Math.min(80, Math.max(reading.speed, bottom / 60)));
-      if (reading.phase === 'top') {
-        if (tickAt - reading.phaseAt >= 3_000) {
-          reading.phase = 'down';
-          reading.phaseAt = tickAt;
-        }
-      } else if (reading.phase === 'down') {
-        const next = Math.min(bottom, reading.position + reading.speed * dt / 1_000);
-        const checkpoint = bottom * (reading.pauseIndex + 1) / 3;
-        if (reading.pauseIndex < 2 && checkpoint > 0.1 && next >= checkpoint - 0.1) {
-          reading.position = checkpoint;
-          reading.pauseIndex++;
-          reading.phase = 'down-pause';
-          reading.phaseAt = tickAt;
-        } else if (next >= bottom - 0.1) {
-          reading.position = bottom;
-          reading.phase = 'bottom';
-          reading.phaseAt = tickAt;
-        } else {
-          reading.position = next;
-        }
-      } else if (reading.phase === 'down-pause') {
-        if (tickAt - reading.phaseAt >= 3_000) {
-          reading.phase = 'down';
-          reading.phaseAt = tickAt;
-        }
-      } else if (reading.phase === 'bottom') {
-        if (bottom > reading.position + 1) {
-          // A lazy-loaded image extended the article: visit the new bottom.
-          reading.phase = 'down';
-          reading.phaseAt = tickAt;
-        } else if (tickAt - reading.phaseAt >= 3_000) {
-          reading.phase = 'up';
-          reading.phaseAt = tickAt;
-          reading.pauseIndex = 0;
-        }
-      } else if (reading.phase === 'up') {
-        const next = Math.max(0, reading.position - reading.speed * dt / 1_000);
-        const checkpoint = bottom * (2 - reading.pauseIndex) / 3;
-        if (reading.pauseIndex < 2 && checkpoint > 0.1 && next <= checkpoint + 0.1) {
-          reading.position = checkpoint;
-          reading.pauseIndex++;
-          reading.phase = 'up-pause';
-          reading.phaseAt = tickAt;
-        } else if (next <= 0.1) {
-          reading.position = 0;
-          reading.phase = 'finish';
-          reading.phaseAt = tickAt;
-        } else {
-          reading.position = next;
-        }
-      } else if (reading.phase === 'up-pause') {
-        if (tickAt - reading.phaseAt >= 3_000) {
-          reading.phase = 'up';
-          reading.phaseAt = tickAt;
-        }
-      } else if (reading.phase === 'finish' && tickAt - reading.phaseAt >= 3_000) {
-        reading.phase = 'done';
-      }
+      if (elapsed < 2_000) { reading.position = 0; reading.phase = 'top'; }
+      else if (elapsed < 18_000) { reading.position = bottom * (elapsed - 2_000) / 16_000; reading.phase = 'down'; }
+      else if (elapsed < 20_000) { reading.position = bottom; reading.phase = 'bottom'; }
+      else if (elapsed < 36_000) { reading.position = bottom * (1 - (elapsed - 20_000) / 16_000); reading.phase = 'up'; }
+      else { reading.position = 0; reading.phase = elapsed >= 40_000 ? 'done' : 'finish'; }
       if (Math.abs(reading.position - (window.scrollY || 0)) > 1)
         window.scrollTo({ top: reading.position, behavior: 'smooth' });
       if (reading.phase === 'done') break;
       await wait(Math.min(200, Math.max(1, deadline - performance.now())));
     }
-    if (reading.page !== pageKey() || reading.phase !== 'done')
-      return { reading: true };
+    if (reading.page !== pageKey() || reading.phase !== 'done') return { reading: true };
 
-    if (!${allowHop ? 'true' : 'false'}) return {};
+    if (!${allowHop ? 'true' : 'false'}) { delete window.__domKeepAliveReading; return {}; }
 
     const blocked = /(login|log-in|logout|sign-in|signin|signup|register|account|cart|basket|checkout|payment|subscribe|privacy|terms|contact|download|delete|remove|admin|wp-admin|wp-login|author|tag|category)/i;
     const currentUrl = new URL(location.href);
@@ -1723,8 +1720,8 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
         if (!/^https?:$/.test(url.protocol)) return;
 
         const host = url.hostname.toLowerCase().replace(/^www\\./, '');
-        if (host !== currentHost) return;
-        if (allowedHost && host !== allowedHost) return;
+        if (linkMode === 'external' ? host === currentHost : host !== currentHost) return;
+        if (linkMode !== 'external' && allowedHost && host !== allowedHost) return;
 
         url.hash = '';
         const normalized = url.href;
@@ -1761,14 +1758,13 @@ function buildKeepAliveActionScript(allowHop, visitedUrls = [], allowedHost) {
 
     candidates.sort((a, b) => b.score - a.score);
     const topScore = candidates[0].score;
-    const top = candidates.filter((candidate) => candidate.score >= topScore - 15);
+    const top = linkMode === 'external' ? candidates : candidates.filter((candidate) => candidate.score >= topScore - 15);
     const chosen = top[Math.floor(Math.random() * top.length)];
 
     try {
       // An earlier inline link can be clicked without reversing the reading scroll.
       const rect = chosen.anchor.getBoundingClientRect();
       if (rect.top >= window.innerHeight) chosen.anchor.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
-      await wait(250);
       chosen.anchor.target = '_self';
       chosen.anchor.focus({ preventScroll: true });
       if (reading.page !== pageKey() || signal.aborted) return { reading: true };

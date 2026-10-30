@@ -62,7 +62,7 @@ test('all-healthy cycles never call the API or reset routing, and keywords wrap 
     assert.equal(f.automation.state.lastError, undefined);
 });
 
-test('only a target-opening proxy with no CAPTCHA or later failure is retained', async () => {
+test('normal Google results retain a proxy even if its target is absent', async () => {
     let replacements, excluded;
     const f = controllerFixture([
         { proxy: proxy(1), googleReached: true, targetOpened: true, captchaSeen: false, failed: false },
@@ -71,15 +71,15 @@ test('only a target-opening proxy with no CAPTCHA or later failure is retained',
         { proxy: proxy(4), googleReached: true, targetOpened: true, captchaSeen: false, failed: true }
     ], async (ids, assign, progress, options) => {
         replacements = [...ids]; excluded = options.failedProxies;
-        progress(7, 7, 3, 3, 7);
+        progress(7, 7, 2, 2, 7);
         ids.forEach((id, i) => assign({ browserId: id, proxy: proxy(5 + i) }));
     });
     await f.automation.runCycle();
-    assert.deepEqual(replacements, [2, 3, 4]);
-    assert.deepEqual(Array.from(excluded, p => p.id), ['proxy-2', 'proxy-3', 'proxy-4']);
+    assert.deepEqual(replacements, [2, 4]);
+    assert.deepEqual(Array.from(excluded, p => p.id), ['proxy-2', 'proxy-4']);
     assert.equal(f.events.some(e => e[0] === 'proxy' && e[1] === 1), false);
-    assert.equal(f.automation.state.retainedBrowsers, 1);
-    assert.equal(f.automation.state.replacedBrowsers, 3);
+    assert.equal(f.automation.state.retainedBrowsers, 2);
+    assert.equal(f.automation.state.replacedBrowsers, 2);
 });
 
 test('a replacement API outage leaves healthy proxies and their new keyword searches intact', async () => {
@@ -117,7 +117,7 @@ test('CAPTCHA and connection failures remain recorded until the next proxy cycle
     wc.emit('did-start-loading');
     wc.emit('did-navigate', {}, 'https://www.google.com/search?q=first', 200);
     assert.equal(managed.state.loading, true);
-    assert.equal(manager.getProxyRotationState(1).googleReached, true);
+    assert.equal(manager.getProxyRotationState(1).googleReached, false);
     assert.equal(manager.getProxyRotationState(1).targetOpened, false);
     wc.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://www.google.com/search?q=first', true);
     wc.emit('did-navigate', {}, 'https://www.google.com/sorry/index', 429);
