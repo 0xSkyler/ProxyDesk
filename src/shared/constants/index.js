@@ -16,8 +16,8 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MAX_BROWSER_COUNT = exports.DEFAULT_PROXY_TIMEOUT_MS = exports.MAX_PROXY_TIMEOUT_MS = exports.MIN_PROXY_TIMEOUT_MS = exports.EPHEMERAL_PARTITION_PREFIX = exports.PARTITION_PREFIX = exports.APP_ID = exports.APP_NAME = void 0;
 __exportStar(require("./countries"), exports);
-exports.APP_NAME = 'ProxyDesk';
-exports.APP_ID = 'com.proxydesk.desktop';
+exports.APP_NAME = 'DOM';
+exports.APP_ID = 'com.dom.desktop';
 /** Partition name prefix for each browser workspace's isolated session. */
 exports.PARTITION_PREFIX = 'persist:browser-';
 /** Partition prefix used when "Persist browser sessions" is OFF (in-memory, per-run isolation). */

@@ -1,0 +1,28 @@
+name: DOM identity and regression checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-dom:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify active DOM identity
+        run: node -e "const p=require('./package.json');if(p.name!=='dom'||p.productName!=='DOM'||p.build.appId!=='com.dom.desktop')throw Error('Only DOM is the active app; obsolete ProxyDesk baselines are forbidden')"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run check

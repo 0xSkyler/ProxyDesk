@@ -5,8 +5,11 @@ const node_events_1 = require("node:events");
 const automation_1 = require("../shared/types/automation");
 const browser_1 = require("../shared/types/browser");
 const seo_1 = require("../shared/seo");
+const ProxyManager_1 = require("./ProxyManager");
+const ProxyTiers_1 = require("../proxy/ProxyTiers");
 const Logger_1 = require("./Logger");
-const { cancellableDelay } = require("./runtime");
+const { cancellableDelay, waitForPreparation } = require("./runtime");
+const DEFAULT_PROXY_SOURCE = (0, ProxyManager_1.resolveProxySource)();
 function createCycleController() {
     const controller = new AbortController();
     // One sleeping monitor per existing workspace is expected, not a leak.
@@ -18,9 +21,9 @@ function createCycleController() {
 /**
  * Single-purpose SEO Tracker orchestration:
  *
- * All Working API -> direct exclusive assignment
- * -> continuous Google monitoring -> replace proxies that cannot show results
- * -> exact-host result click -> timed internal/external Keep Alive
+ * User-selected proxy API -> direct exclusive assignment
+ * -> continuous Google monitoring -> challenge pause/resume
+ * -> exact-host result click -> repeating same-host Keep Alive
  * -> rotate and restart on the user-configured cadence.
  */
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
@@ -35,7 +38,12 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
     state = {
         running: false,
         cycleInProgress: false,
-        proxySource: 'All Working API',
+        preparingBrowsers: false,
+        preparedBrowsers: 0,
+        proxySource: DEFAULT_PROXY_SOURCE.id,
+        proxySourceLabel: DEFAULT_PROXY_SOURCE.label,
+        proxyApiUrl: DEFAULT_PROXY_SOURCE.endpoint,
+        proxyTier: null, // Legacy direct API callers without the UI remain unchanged.
         query: '',
         targetWebsite: '',
         intervalSec: 600,
@@ -47,7 +55,9 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         checkedProxies: 0,
         totalProxies: 0,
         liveProxies: 0,
-        assignedBrowsers: 0
+        assignedBrowsers: 0,
+        retainedBrowsers: 0,
+        replacedBrowsers: 0
     };
     constructor(proxyManager, browserManager, ensureBrowserCount) {
         super();
@@ -60,6 +70,22 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
     }
     isRunning() {
         return this.state.running;
+    }
+    configureProxy(config) {
+        if (this.state.running)
+            throw new Error('Stop SEO Tracker before changing the proxy source.');
+        const source = (0, ProxyManager_1.resolveProxySource)(config?.source, config?.endpoint);
+        const requestedTier = config?.tier ?? this.state.proxyTier;
+        const tier = requestedTier == null ? null : (0, ProxyTiers_1.resolveProxyTier)(requestedTier);
+        this.state = {
+            ...this.state,
+            proxySource: source.id,
+            proxySourceLabel: source.label,
+            proxyApiUrl: source.endpoint,
+            proxyTier: tier
+        };
+        this.emitState();
+        return this.getState();
     }
     async start(config) {
         const query = config.query.trim();
@@ -81,6 +107,12 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         const browserCount = (0, automation_1.normalizeBrowserCount)(config.browserCount);
         const maxPages = (0, automation_1.normalizeSeoMaxPages)(config.maxPages);
         const intervalSec = (0, automation_1.normalizeAutomationIntervalSeconds)(config.intervalSec);
+        const proxySource = (0, ProxyManager_1.resolveProxySource)(config.proxySource ?? this.state.proxySource, config.proxyApiUrl ?? this.state.proxyApiUrl);
+        const requestedTier = config.proxyTier ?? this.state.proxyTier;
+        const proxyTier = requestedTier == null ? null : (0, ProxyTiers_1.resolveProxyTier)(requestedTier);
+        if (keywords.length > browserCount) {
+            throw new Error(`Select at least ${keywords.length} browsers to run all keywords at the same time.`);
+        }
         this.stopTimerOnly();
         this.proxyManager.cancelCurrentFetch();
         this.generation += 1;
@@ -93,7 +125,12 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.state = {
             running: true,
             cycleInProgress: true,
-            proxySource: 'All Working API',
+            preparingBrowsers: true,
+            preparedBrowsers: 0,
+            proxySource: proxySource.id,
+            proxySourceLabel: proxySource.label,
+            proxyApiUrl: proxySource.endpoint,
+            proxyTier,
             query,
             targetWebsite,
             controlledTestHost: controlledTestHost || undefined,
@@ -107,19 +144,31 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             totalProxies: 0,
             liveProxies: 0,
             assignedBrowsers: 0,
-            nextCycleAt: new Date(Date.now() + intervalSec * 1000).toISOString()
+            retainedBrowsers: 0,
+            replacedBrowsers: 0,
+            nextCycleAt: undefined
         };
         this.emitState();
         let browserIds;
         try {
-            browserIds = await this.ensureBrowserCount(browserCount);
+            const signal = this.cycleController.signal;
+            browserIds = await waitForPreparation(this.ensureBrowserCount(browserCount, {
+                signal,
+                onProgress: (readyIds) => {
+                    if (!this.isCurrent(generation) || !this.state.preparingBrowsers) return;
+                    this.state = { ...this.state, preparedBrowsers: readyIds.length, browserIds: [...readyIds] };
+                    this.emitState();
+                }
+            }), 60_000, signal, 'Browser preparation timed out. Try fewer browsers or retry Start.');
         }
         catch (err) {
             if (!this.isCurrent(generation)) return this.getState();
+            this.cycleController.abort();
             this.state = {
                 ...this.state,
                 running: false,
                 cycleInProgress: false,
+                preparingBrowsers: false,
                 nextCycleAt: undefined,
                 lastError: `Browser preparation failed: ${err.message}`
             };
@@ -132,6 +181,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                 ...this.state,
                 running: false,
                 cycleInProgress: false,
+                preparingBrowsers: false,
                 nextCycleAt: undefined,
                 lastError: 'No browser workspaces are available.'
             };
@@ -141,7 +191,10 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.state = {
             ...this.state,
             cycleInProgress: false,
-            browserIds
+            preparingBrowsers: false,
+            preparedBrowsers: browserIds.length,
+            browserIds,
+            nextCycleAt: new Date(Date.now() + intervalSec * 1000).toISOString()
         };
         this.emitState();
         this.timer = setInterval(() => {
@@ -176,6 +229,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             ...this.state,
             running: false,
             cycleInProgress: false,
+            preparingBrowsers: false,
             nextCycleAt: undefined
         };
         this.emitState();
@@ -213,9 +267,27 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         this.cycleController = createCycleController();
         const cycleNumber = this.state.cycleNumber + 1;
         const browserIds = [...this.state.browserIds];
-        const { query, targetWebsite, controlledTestHost, maxPages } = this.state;
+        const { query, targetWebsite, controlledTestHost, maxPages, proxySource, proxyApiUrl, proxyTier } = this.state;
         const keywords = parseAutomationKeywords(query);
-        const cycleQuery = keywords[(cycleNumber - 1) % keywords.length] ?? query;
+        const browserQueries = new Map(browserIds.map((browserId, index) =>
+            [browserId, keywords[(index + cycleNumber - 1) % keywords.length] ?? query]));
+        // Retain already-successful proxies for the next cycle, including
+        // when a country tier is selected. Historical success is NOT a live
+        // connectivity, latency, geolocation, or health preflight. Proxies
+        // outside the user's selected tier cannot be retained.
+        const rotationStates = new Map(browserIds.map(id => [id, this.browserManager.getProxyRotationState(id)]));
+        const belongsToSelectedTier = proxy => !proxyTier ||
+            (0, ProxyTiers_1.matchesProxyTier)(proxy.countryCode, proxyTier);
+        const retained = cycleNumber > 1 ? browserIds.filter(id => {
+            const health = rotationStates.get(id);
+            return health.proxy && belongsToSelectedTier(health.proxy) &&
+                health.targetOpened && !health.captchaSeen && !health.failed;
+        }).map(browserId => ({ browserId, proxy: rotationStates.get(browserId).proxy, retained: true })) : [];
+        const retainedIds = new Set(retained.map(assignment => assignment.browserId));
+        const replacementIds = browserIds.filter(id => !retainedIds.has(id));
+        const failedProxies = cycleNumber > 1
+            ? replacementIds.map(id => rotationStates.get(id).proxy)
+                .filter(proxy => proxy && belongsToSelectedTier(proxy)) : [];
         this.state = {
             ...this.state,
             cycleInProgress: true,
@@ -223,34 +295,58 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
             fetchedProxies: 0,
             checkedProxies: 0,
             totalProxies: 0,
-            liveProxies: 0,
-            assignedBrowsers: 0,
+            liveProxies: retained.length,
+            assignedBrowsers: retained.length,
+            retainedBrowsers: retained.length,
+            replacedBrowsers: 0,
             lastCycleStartedAt: new Date().toISOString(),
             lastError: undefined
         };
         this.emitState();
         const seoTasks = [];
         try {
-            const retained = new Map();
-            // Keep the routing identity, but never carry page/session data into a cycle.
+            // Stop outgoing work before navigation; keep all session data.
             for (const id of browserIds) {
                 if (!this.isCurrent(generation))
                     return;
                 this.browserManager.cancelMeasurementSession(id);
                 this.browserManager.setBrowserKeepAlive(id, false, false);
-                if (this.browserManager.canRetainProxy(id)) {
-                    retained.set(id, this.proxyManager.getAssignment(id));
-                }
-                else {
-                    this.proxyManager.markFailed(this.proxyManager.getAssignment(id));
-                }
             }
-            await Promise.all(browserIds.map((id) => this.browserManager.resetBrowserSession(id)));
-            if (!this.isCurrent(generation)) return;
-            await this.proxyManager.fetchAssignDirect(browserIds, (assignment) => {
-                if (!this.isCurrent(generation))
+            const cleanupController = this.cycleController;
+            const signal = cleanupController.signal;
+            let nextBrowser = 0;
+            const cleanBrowser = async () => {
+                while (nextBrowser < browserIds.length && this.isCurrent(generation) && !signal.aborted) {
+                    const id = browserIds[nextBrowser++];
+                    if (!retainedIds.has(id)) {
+                        await waitForPreparation(this.browserManager.assignProxy(id, null), 15_000, signal,
+                            `Browser ${id} proxy reset timed out before the next cycle.`);
+                    }
+                    if (!this.isCurrent(generation) || signal.aborted) return;
+                    await waitForPreparation(this.browserManager.prepareCycleDocument(id, signal), 15_000, signal,
+                        `Browser ${id} page preparation timed out before the next cycle.`);
+                    if (!this.isCurrent(generation) || signal.aborted) return;
+                }
+            };
+            // Bound page preparation to two browsers at a time on small PCs.
+            // Proxy fetching/searching starts only after all pages are released.
+            // No cache, cookie or local-storage clearing occurs.
+            try {
+                await Promise.all(Array.from({ length: Math.min(2, browserIds.length) }, cleanBrowser));
+            } catch (error) { cleanupController.abort(); throw error; }
+            if (!this.isCurrent(generation) || signal.aborted) return;
+            for (const assignment of retained) {
+                const browserQuery = browserQueries.get(assignment.browserId);
+                seoTasks.push(this.handleAssignment(generation, cycleNumber, assignment, browserQuery,
+                    targetWebsite, controlledTestHost, maxPages));
+            }
+            // Healthy browsers start the next keyword even if the provider is
+            // unavailable. An all-healthy cycle needs no API request at all.
+            if (replacementIds.length) await this.proxyManager.fetchAssignDirect(replacementIds, (assignment) => {
+                if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber)
                     return;
-                seoTasks.push(this.handleAssignment(generation, cycleNumber, assignment, cycleQuery, targetWebsite, controlledTestHost, maxPages));
+                const browserQuery = browserQueries.get(assignment.browserId) ?? query;
+                seoTasks.push(this.handleAssignment(generation, cycleNumber, assignment, browserQuery, targetWebsite, controlledTestHost, maxPages));
             }, (checked, total, working, assigned, fetched) => {
                 if (!this.isCurrent(generation))
                     return;
@@ -259,11 +355,12 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     fetchedProxies: fetched,
                     checkedProxies: checked,
                     totalProxies: total,
-                    liveProxies: working,
-                    assignedBrowsers: assigned
+                    liveProxies: working + retained.length,
+                    assignedBrowsers: assigned + retained.length,
+                    replacedBrowsers: assigned
                 };
                 this.emitState();
-            }, retained);
+            }, { source: proxySource, endpoint: proxyApiUrl, tier: proxyTier, retainedAssignments: retained, failedProxies });
             await Promise.allSettled(seoTasks);
             if (!this.isCurrent(generation))
                 return;
@@ -273,7 +370,7 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                 lastCycleCompletedAt: new Date().toISOString()
             };
             this.emitState();
-            Logger_1.logger.info('application', `SEO cycle ${cycleNumber} (${cycleQuery}) complete: ${this.state.liveProxies} available, ` +
+            Logger_1.logger.info('application', `SEO cycle ${cycleNumber} (${keywords.join(', ')}) complete: ${this.state.liveProxies} available, ` +
                 `${this.state.assignedBrowsers}/${browserIds.length} browser(s) assigned.`);
         }
         catch (err) {
@@ -296,12 +393,13 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
         }
     }
     async handleAssignment(generation, cycleNumber, assignment, query, targetWebsite, controlledTestHost, maxPages) {
-        if (!assignment.proxy || !this.isCurrent(generation))
+        if (!assignment.proxy || !this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber)
             return;
         const { browserId, proxy } = assignment;
         try {
-            await this.browserManager.assignProxy(browserId, proxy);
-            if (!this.isCurrent(generation))
+            if (assignment.retained) this.browserManager.beginProxyCycle(browserId);
+            else await this.browserManager.assignProxy(browserId, proxy);
+            if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber)
                 return;
             this.browserManager.setBrowserKeepAlive(browserId, false, false);
             const measurementToken = this.browserManager.startMeasurementSession(browserId);
@@ -343,38 +441,31 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)) {
                     return;
                 }
-                result = { browserId, status: 'error', error: err.message, monitoring: true, ranAt: new Date().toISOString() };
+                this.emit('seoResult', {
+                    cycleNumber,
+                    result: {
+                        browserId,
+                        status: 'error',
+                        error: err.message,
+                        monitoring: true,
+                        ranAt: new Date().toISOString()
+                    }
+                });
+                await cancellableDelay(5_000, signal);
+                continue;
             }
             if (!this.isCurrent(generation) ||
                 this.state.cycleNumber !== cycleNumber ||
                 !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)) {
                 return;
             }
-            this.browserManager.recordGoogleResult(browserId, result);
-            if (result.status === 'paused' || result.status === 'error' ||
-                (result.status === 'no-match' && !result.resultsScanned)) {
-                this.emit('seoResult', { cycleNumber, result });
-                try {
-                    const proxy = await this.proxyManager.replaceFailedAssignment(browserId, signal);
-                    if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber ||
-                        !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)) return;
-                    await this.browserManager.assignProxy(browserId, proxy);
-                    if (!this.isCurrent(generation) || this.state.cycleNumber !== cycleNumber ||
-                        !this.browserManager.isMeasurementSessionCurrent(browserId, measurementToken)) return;
-                    measurementToken = this.browserManager.startMeasurementSession(browserId);
-                    continue;
-                }
-                catch (err) {
-                    if (signal.aborted) return;
-                    this.emit('seoResult', { cycleNumber, result: { ...result, status: 'error', error: err.message } });
-                    await cancellableDelay(5_000, signal);
-                    continue;
-                }
-            }
             if (result.status === 'matched' &&
                 result.interactionStatus === 'opened' &&
                 result.matchedUrl) {
-                this.browserManager.startControlledKeepAlive(browserId, interactionHost);
+                const landedUrl = result.landedUrl || result.matchedUrl;
+                const keepAliveHost = (0, seo_1.hostMatchesTarget)(landedUrl, interactionHost)
+                    ? (0, seo_1.normalizeTargetHost)(landedUrl) : interactionHost;
+                this.browserManager.startControlledKeepAlive(browserId, keepAliveHost);
                 this.emit('seoResult', {
                     cycleNumber,
                     result: {
@@ -439,16 +530,29 @@ class SeoAutomationManager extends node_events_1.EventEmitter {
                     result: {
                         ...result,
                         interactionStatus: 'click-failed',
-                        error: 'Target was detected, but the result could not be opened. ProxyDesk will retry in this session.'
+                        error: 'Target was detected, but the result could not be opened. DOM will retry in this session.'
                     }
                 });
                 await cancellableDelay(3_000, signal);
                 continue;
             }
             this.emit('seoResult', { cycleNumber, result });
+            if (result.status === 'paused') {
+                // Leave the current challenge available for manual recovery.
+                // The CAPTCHA flag remains sticky: this proxy will be replaced
+                // at the next cycle even if normal results return meanwhile.
+                const recovered = await this.browserManager.waitForGoogleRecovery(browserId, observationIntervalMs);
+                if (!recovered) {
+                    await cancellableDelay(1_000, signal);
+                }
+                continue;
+            }
             // Matched and no-match observations are measurements, not terminal
             // states. Recheck periodically until the next proxy rotation.
-            await cancellableDelay(observationIntervalMs, signal);
+            // Unfinished pages keep their live preload and document. Resume
+            // promptly so a newly rendered target is clicked instead of
+            // sleeping for 30 seconds and then reloading it away.
+            await cancellableDelay(result.status === 'monitoring' ? 250 : observationIntervalMs, signal);
         }
     }
     isCurrent(generation) {

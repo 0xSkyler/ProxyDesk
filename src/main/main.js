@@ -6,15 +6,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
 const node_path_1 = __importDefault(require("node:path"));
 const BrowserManager_1 = require("./BrowserManager");
+const { BrowserPreparation } = require("./BrowserPreparation");
 const ProxyManager_1 = require("./ProxyManager");
 const SeoAutomationManager_1 = require("./SeoAutomationManager");
 const registerIpc_1 = require("./ipc/registerIpc");
 const Logger_1 = require("./Logger");
 const browser_1 = require("../shared/types/browser");
-const automation_1 = require("../shared/types/automation");
 // Recovered renderer assets are available in both source and packaged runs.
 const isDev = process.env.NODE_ENV === 'development';
-if (process.platform === 'linux' && process.env.PROXYDESK_SOFTWARE_RENDERING === '1') {
+if (process.platform === 'linux' && process.env.DOM_SOFTWARE_RENDERING === '1') {
     electron_1.app.disableHardwareAcceleration();
 }
 let mainWindow = null;
@@ -26,7 +26,7 @@ let startupWork = Promise.resolve();
 let shuttingDown = false;
 let shutdownComplete = false;
 let disposeIpc = () => {};
-let browserPreparation = Promise.resolve();
+let browserPreparation;
 async function createWindowShell() {
     mainWindow = new electron_1.BrowserWindow({
         width: 1600,
@@ -34,7 +34,7 @@ async function createWindowShell() {
         minWidth: 1050,
         minHeight: 720,
         backgroundColor: '#0f1115',
-        title: 'ProxyDesk SEO Tracker Lite',
+        title: 'DOM SEO Tracker Lite',
         show: false,
         webPreferences: {
             preload: node_path_1.default.join(__dirname, '../preload/preload.js'),
@@ -70,36 +70,17 @@ async function loadRenderer() {
     }
     mainWindow.show();
 }
-async function ensureBrowserCount(count) {
-    // Serialize workspace mutations only, never the concurrent browser tasks.
-    const previous = browserPreparation;
-    const work = previous.catch(() => {}).then(() => prepareBrowserCount(count));
-    browserPreparation = work;
-    return work;
-}
-async function prepareBrowserCount(count) {
+async function ensureBrowserCount(count, options) {
     if (shuttingDown) return [];
-    const normalized = (0, automation_1.normalizeBrowserCount)(count);
-    const desired = new Set(browser_1.BROWSER_IDS.slice(0, normalized));
-    const existing = new Set(browserManager.getAll().map((browser) => browser.id));
-    for (const id of Array.from(existing)) {
-        if (!desired.has(id))
-            await browserManager.destroyBrowser(id);
-    }
-    await Promise.all(Array.from(desired)
-        .filter((id) => !existing.has(id))
-        .map((id) => browserManager.createBrowser(id, {
-        persistSessions: false,
-        startPage: 'about:blank',
-        userAgent: ''
-    })));
-    activeBrowserCount = normalized;
-    return browser_1.BROWSER_IDS.slice(0, activeBrowserCount);
+    const ids = await browserPreparation.ensure(count, options);
+    activeBrowserCount = ids.length;
+    return ids;
 }
 async function bootstrap() {
     proxyManager = new ProxyManager_1.ProxyManager();
     await proxyManager.init();
     browserManager = new BrowserManager_1.BrowserManager();
+    browserPreparation = new BrowserPreparation(browserManager);
     activeBrowserCount = 10;
     automationManager = new SeoAutomationManager_1.SeoAutomationManager(proxyManager, browserManager, ensureBrowserCount);
     // Register IPC before the renderer loads. The previous order allowed the
@@ -117,7 +98,7 @@ async function bootstrap() {
     // Keep Alive is automatic after a matched Google result.
     browserManager.configureKeepAlive(60_000, 1, false);
     await loadRenderer();
-    Logger_1.logger.info('application', 'ProxyDesk SEO Tracker Lite ready.');
+    Logger_1.logger.info('application', 'DOM SEO Tracker Lite ready.');
 }
 electron_1.app.whenReady().then(() => {
     electron_1.session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
@@ -149,13 +130,13 @@ electron_1.app.on('before-quit', (event) => {
     deadline.unref();
     void (async () => {
         await startupWork;
-        await browserPreparation.catch(() => {});
+        await browserPreparation?.queue.catch(() => {});
         automationManager?.stop();
         disposeIpc();
         await browserManager?.destroyAll();
         await Logger_1.logger.close();
     })().catch((err) => {
-        console.error('ProxyDesk shutdown failed:', err);
+        console.error('DOM shutdown failed:', err);
     }).finally(() => {
         clearTimeout(deadline);
         shutdownComplete = true;

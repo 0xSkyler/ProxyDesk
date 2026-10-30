@@ -1,0 +1,124 @@
+name: DOM v0.5.23 verified release
+
+on:
+  push:
+    branches: [release/v0.5.23]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dom-v0.5.23-release
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm run package:windows
+      - run: node scripts/check-package.cjs release-windows/win-unpacked/resources/app.asar
+      - run: node scripts/smoke-runtime.cjs release-windows/win-unpacked/DOM.exe
+      - run: node scripts/smoke-google-recognition.cjs release-windows/win-unpacked/DOM.exe
+      - run: node scripts/smoke-proxy-rotation.cjs release-windows/win-unpacked/DOM.exe
+      - run: node scripts/smoke-google-prompts.cjs release-windows/win-unpacked/DOM.exe
+      - run: node scripts/smoke-keep-alive-reading.cjs release-windows/win-unpacked/DOM.exe
+      - name: Checksum Windows installer
+        shell: pwsh
+        run: |
+          $installer = 'release-windows/DOM-v0.5.23-Windows-x64-Setup.exe'
+          if (!(Test-Path $installer)) { throw "Missing $installer" }
+          $digest = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
+          "$digest  DOM-v0.5.23-Windows-x64-Setup.exe" | Set-Content 'release-windows/SHA256SUMS-windows.txt' -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dom-v0.5.23-windows
+          path: |
+            release-windows/DOM-v0.5.23-Windows-x64-Setup.exe
+            release-windows/SHA256SUMS-windows.txt
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libxss1 apparmor
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm run package:linux
+      - run: node scripts/check-package.cjs
+      - run: xvfb-run -a node scripts/smoke-runtime.cjs release-linux/linux-unpacked/dom
+      - run: xvfb-run -a node scripts/smoke-google-recognition.cjs release-linux/linux-unpacked/dom
+      - run: xvfb-run -a node scripts/smoke-proxy-rotation.cjs release-linux/linux-unpacked/dom
+      - run: xvfb-run -a node scripts/smoke-google-prompts.cjs release-linux/linux-unpacked/dom
+      - run: xvfb-run -a node scripts/smoke-keep-alive-reading.cjs release-linux/linux-unpacked/dom
+      - name: Checksum Linux packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-linux
+          sha256sum DOM-v0.5.23-linux-*.AppImage DOM-v0.5.23-linux-*.tar.gz > SHA256SUMS-linux.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dom-v0.5.23-linux
+          path: |
+            release-linux/*.AppImage
+            release-linux/*.tar.gz
+            release-linux/SHA256SUMS-linux.txt
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dom-v0.5.23-windows
+          path: dist/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: dom-v0.5.23-linux
+          path: dist/linux
+      - name: Verify matching version and artifact checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "0.5.23"
+          (cd dist/windows && sha256sum -c SHA256SUMS-windows.txt)
+          (cd dist/linux && sha256sum -c SHA256SUMS-linux.txt)
+      - name: Publish verified v0.5.23
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.5.23 >/dev/null 2>&1; then
+            echo "v0.5.23 is already published and immutable; artifact checks completed."
+            exit 0
+          fi
+          gh release create v0.5.23 \
+            dist/windows/*.exe dist/windows/SHA256SUMS-windows.txt \
+            dist/linux/*.AppImage dist/linux/*.tar.gz dist/linux/SHA256SUMS-linux.txt \
+            --target "$GITHUB_SHA" \
+            --title "DOM v0.5.23 - persistent browser profiles and cookie consent" \
+            --notes "Persistent isolated Chromium profiles now keep HTTP cache, Cache Storage, cookies and local site data across keyword cycles, proxy changes and browser recreation. Standard positive cookie-consent banners are accepted automatically alongside existing Google consent handling. Stop, Keep Alive, proxy rotation, JavaScript and security isolation remain supported. Windows and Linux source, unit and native-browser tests must pass before publication."

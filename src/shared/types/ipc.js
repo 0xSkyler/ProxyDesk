@@ -8,6 +8,7 @@ exports.IPC_CHANNELS = {
     browserSetKeepAliveAll: 'browser:setKeepAliveAll',
     browserStateChanged: 'browser:stateChanged',
     automationGetState: 'automation:getState',
+    automationConfigureProxy: 'automation:configureProxy',
     automationStart: 'automation:start',
     automationStop: 'automation:stop',
     automationRunNow: 'automation:runNow',

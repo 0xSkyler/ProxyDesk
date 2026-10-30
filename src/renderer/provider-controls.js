@@ -1,0 +1,273 @@
+const SOURCE_DEFAULTS = Object.freeze({
+    'all-working': {
+        label: 'All Working API',
+        endpoint: 'http://169.58.35.69/data/all-working.txt'
+    },
+    'proxyscrape-free': {
+        label: 'ProxyScrape Free API',
+        endpoint: 'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text'
+    }
+});
+const TIER_LABELS = Object.freeze({
+    tier1: 'Tier 1 · 25 countries',
+    tier2: 'Tier 2 · 22 countries',
+    tier3: 'Tier 3 · All remaining / unknown countries'
+});
+document.documentElement.dataset.domProviderControls = 'loaded';
+
+let latestState = null;
+let sourceSelect = null;
+let tierSelect = null;
+let endpointInput = null;
+let replayingStart = false;
+let errorElement = null;
+let mountObserver = null;
+let preparationStatus = null;
+const browserStates = new Map();
+
+function showError(message) {
+    if (!errorElement) {
+        errorElement = document.createElement('div');
+        errorElement.className = 'tracker-error proxy-source-error';
+        document.querySelector('.tracker-controls')?.after(errorElement);
+    }
+    errorElement.textContent = message;
+}
+
+function clearError() {
+    if (errorElement)
+        errorElement.textContent = '';
+}
+
+function updateSourceCopy(label) {
+    const description = document.querySelector('.seo-tracker__title p');
+    if (description) {
+        const text = 'Tier 1/2 use provider country labels; Tier 3 includes all others, including unknown. Direct assignment without proxy preflight checks.';
+        if (description.textContent !== text)
+            description.textContent = text;
+    }
+    const status = Array.from(document.querySelectorAll('.tracker-status span'))
+        .find((element) => element.textContent?.trim().startsWith('Source'));
+    const strong = status?.querySelector('strong');
+    if (strong && strong.textContent !== label)
+        strong.textContent = label;
+    const cycleStatus = document.querySelector('.tracker-status');
+    if (cycleStatus && latestState) {
+        let retained = cycleStatus.querySelector('[data-dom-proxy-rotation]');
+        if (!retained) {
+            retained = document.createElement('span');
+            retained.dataset.domProxyRotation = 'true';
+            cycleStatus.append(retained);
+        }
+        const message = `Kept ${latestState.retainedBrowsers || 0} · New ${latestState.replacedBrowsers || 0}`;
+        if (retained.textContent !== message) retained.textContent = message;
+    }
+    if (preparationStatus && latestState) {
+        const preparing = Boolean(latestState.preparingBrowsers);
+        preparationStatus.hidden = !preparing;
+        const message = preparing
+            ? `Preparing browsers: ${latestState.preparedBrowsers || 0} / ${latestState.browserCount}. You can stop preparation at any time.`
+            : '';
+        if (preparationStatus.textContent !== message)
+            preparationStatus.textContent = message;
+    }
+}
+
+function applyState(state) {
+    latestState = state;
+    const source = SOURCE_DEFAULTS[state.proxySource] ? state.proxySource : 'proxyscrape-free';
+    if (sourceSelect && document.activeElement !== sourceSelect)
+        sourceSelect.value = source;
+    if (endpointInput && document.activeElement !== endpointInput)
+        endpointInput.value = state.proxyApiUrl || SOURCE_DEFAULTS[source].endpoint;
+    if (tierSelect && document.activeElement !== tierSelect)
+        tierSelect.value = TIER_LABELS[state.proxyTier] ? state.proxyTier : 'tier1';
+    if (sourceSelect)
+        sourceSelect.disabled = Boolean(state.running);
+    if (endpointInput)
+        endpointInput.disabled = Boolean(state.running);
+    if (tierSelect)
+        tierSelect.disabled = Boolean(state.running);
+    updateSourceCopy(state.proxySourceLabel || SOURCE_DEFAULTS[source].label);
+}
+
+function renderBrowserMessage(state) {
+    const card = Array.from(document.querySelectorAll('.browser-card'))
+        .find((element) => element.querySelector('.browser-card__header strong')?.textContent === `Browser ${state.id}`);
+    const footer = card?.querySelector('.browser-card__footer');
+    const status = card?.querySelector('.browser-card__header span');
+    if (status) {
+        const activities = {
+            'waiting-results': 'Waiting for results',
+            'scanning-results': 'Scanning results',
+            'opening-target': 'Opening target'
+        };
+        const defaults = { idle: 'Idle', loading: 'Loading', connected: 'Ready',
+            'proxy-checking': 'Proxy assigned', 'proxy-failed': 'Proxy failed',
+            'no-proxy': 'Waiting for proxy', crashed: 'Crashed' };
+        const activity = /^https?:\/\/[^/]*google\.[^/]+\/search(?:\?|$)/i.test(state.url)
+            ? activities[state.googleSearchActivity] : null;
+        const label = activity || defaults[state.connectionStatus] || state.connectionStatus;
+        if (label && status.textContent !== label) status.textContent = label;
+    }
+    if (!footer)
+        return;
+    const failed = state.connectionStatus === 'proxy-failed' && Boolean(state.errorMessage);
+    const message = failed ? state.errorMessage : state.url || 'Waiting for SEO Tracker…';
+    if (footer.textContent !== message)
+        footer.textContent = message;
+    if (footer.title !== message)
+        footer.title = message;
+    footer.classList.toggle('status-bad', failed);
+}
+
+function applyBrowserState(state) {
+    browserStates.set(state.id, state);
+    renderBrowserMessage(state);
+}
+
+function createLabel(text, control, className) {
+    const label = document.createElement('label');
+    if (className)
+        label.className = className;
+    label.append(text, control);
+    return label;
+}
+
+async function mount() {
+    const controls = document.querySelector('.tracker-controls');
+    if (!controls) {
+        if (!mountObserver) {
+            mountObserver = new MutationObserver(() => {
+                if (document.querySelector('.tracker-controls')) {
+                    mountObserver.disconnect();
+                    mountObserver = null;
+                    void mount();
+                }
+            });
+            mountObserver.observe(document.body, { childList: true, subtree: true });
+        }
+        return;
+    }
+    if (document.querySelector('[data-dom-proxy-source]'))
+        return;
+
+    sourceSelect = document.createElement('select');
+    sourceSelect.dataset.domProxySource = 'true';
+    sourceSelect.setAttribute('aria-label', 'Proxy source');
+    for (const [value, source] of Object.entries(SOURCE_DEFAULTS)) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = source.label;
+        sourceSelect.append(option);
+    }
+
+    tierSelect = document.createElement('select');
+    tierSelect.dataset.domProxyTier = 'true';
+    tierSelect.setAttribute('aria-label', 'Proxy country tier');
+    for (const [value, label] of Object.entries(TIER_LABELS)) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        tierSelect.append(option);
+    }
+    tierSelect.value = 'tier1';
+    tierSelect.addEventListener('change', () => {
+        if (sourceSelect.value === 'all-working' && tierSelect.value !== 'tier3')
+            showError('Tier 1/2 require country-labeled JSON. The All Working text feed can be used as unclassified Tier 3 proxies.');
+        else clearError();
+    });
+
+    endpointInput = document.createElement('input');
+    endpointInput.type = 'url';
+    endpointInput.setAttribute('aria-label', 'Proxy API URL (editable)');
+    endpointInput.placeholder = 'https://proxy-provider.example/list.txt';
+    endpointInput.autocomplete = 'off';
+    endpointInput.spellcheck = false;
+
+    sourceSelect.addEventListener('change', () => {
+        endpointInput.value = SOURCE_DEFAULTS[sourceSelect.value].endpoint;
+        latestState = {
+            ...latestState,
+            proxySource: sourceSelect.value,
+            proxySourceLabel: SOURCE_DEFAULTS[sourceSelect.value].label,
+            proxyApiUrl: endpointInput.value
+        };
+        updateSourceCopy(SOURCE_DEFAULTS[sourceSelect.value].label);
+        if (sourceSelect.value === 'all-working' && tierSelect.value !== 'tier3')
+            showError('Tier 1/2 require country-labeled JSON. The All Working text feed can be used as unclassified Tier 3 proxies.');
+        else clearError();
+    });
+    endpointInput.addEventListener('input', clearError);
+
+    controls.prepend(
+        createLabel('Country tier', tierSelect, 'proxy-tier-select'),
+        createLabel('Proxy source', sourceSelect),
+        createLabel('Proxy API URL (editable)', endpointInput, 'proxy-api-endpoint')
+    );
+    document.documentElement.dataset.domProviderControls = 'mounted';
+
+    preparationStatus = document.createElement('div');
+    preparationStatus.className = 'tracker-preparation';
+    preparationStatus.setAttribute('role', 'status');
+    preparationStatus.setAttribute('aria-live', 'polite');
+    preparationStatus.hidden = true;
+    document.querySelector('.tracker-status')?.after(preparationStatus);
+
+    const state = await window.app.automation.getState();
+    applyState(state);
+    window.app.automation.onStateChanged(applyState);
+    for (const browser of await window.app.browser.getAll())
+        applyBrowserState(browser);
+    window.app.browser.onStateChanged(applyBrowserState);
+
+    // The recovered React bundle contains its original static source label.
+    // Keep that text synchronized without replacing the recovered interface.
+    new MutationObserver(() => {
+        if (latestState)
+            updateSourceCopy(latestState.proxySourceLabel || SOURCE_DEFAULTS[sourceSelect.value].label);
+        // Status cells truncate long diagnostics. Keep their full text
+        // available on hover without changing the recovered table layout.
+        for (const row of document.querySelectorAll('.tracker-results tbody tr')) {
+            const cell = row.cells[2];
+            if (cell && cell.title !== cell.textContent) cell.title = cell.textContent;
+        }
+    }).observe(document.querySelector('.seo-tracker'), { childList: true, subtree: true, characterData: true });
+    const browserArea = document.querySelector('.lite-browser-area');
+    if (browserArea) {
+        new MutationObserver(() => {
+            for (const browser of browserStates.values())
+                renderBrowserMessage(browser);
+        }).observe(browserArea, { childList: true, subtree: true, characterData: true });
+    }
+}
+
+document.addEventListener('click', async (event) => {
+    const button = event.target.closest('button');
+    if (!button || replayingStart || !button.textContent?.startsWith('Start SEO Tracker'))
+        return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    try {
+        clearError();
+        const state = await window.app.automation.configureProxy({
+            source: sourceSelect.value,
+            endpoint: endpointInput.value.trim(),
+            tier: tierSelect.value
+        });
+        applyState(state);
+        replayingStart = true;
+        button.click();
+    }
+    catch (error) {
+        showError(error.message || String(error));
+    }
+    finally {
+        replayingStart = false;
+    }
+}, true);
+
+if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', () => void mount(), { once: true });
+else
+    void mount();
